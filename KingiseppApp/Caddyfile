@@ -1,0 +1,14 @@
+# KingiseppApp — телефон в той же Wi‑Fi / LAN
+# Открывайте: http://<IP-ПК>:8080
+# (HTTPS с IP часто ломается на tls internal — для LAN достаточно HTTP)
+
+{
+	auto_https off
+}
+
+:8080 {
+	reverse_proxy 127.0.0.1:8000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+}
