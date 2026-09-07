@@ -31,6 +31,65 @@ export type AssignmentItem = {
   assignment_version: number;
   is_urgent: boolean;
   urgent_request_id: number | null;
+  hourly_rate: number | null;
+  rate_updated_at: string | null;
+  combined_score: number | null;
+  peer_submitted: boolean;
+};
+
+export type SiteOverview = {
+  site_name: string | null;
+  period_code: string;
+  period_starts_on: string | null;
+  evaluation_started_on: string | null;
+  tariff_min: number | null;
+  tariff_max: number | null;
+  total: number;
+  masters: {
+    user_id: number;
+    fio: string;
+    tab_no: string;
+    role: string;
+    total: number;
+    submitted: number;
+    remaining: number;
+  }[];
+  warning?: string | null;
+};
+
+export type QuestionnaireEvaluator = {
+  fio: string | null;
+  tab_no: string | null;
+  role: string | null;
+  role_ru: string;
+  status: string;
+  scores: Record<string, number | null>;
+  avg: number | null;
+  comment: string | null;
+  submitted_at: string | null;
+};
+
+export type Questionnaire = {
+  assignment_id: number;
+  period_code: string;
+  employee: {
+    tab_no: string;
+    fio: string;
+    position: string | null;
+    site_name: string | null;
+    hire_date: string | null;
+    experience_text: string | null;
+    hourly_rate: number | null;
+    rate_updated_at: string | null;
+  };
+  criteria: { key: string; title: string }[];
+  primary: QuestionnaireEvaluator | null;
+  secondary: QuestionnaireEvaluator | null;
+  dual_enabled: boolean;
+  combined_avg: number | null;
+  k_vyr: number;
+  final_score: number | null;
+  status: string;
 };
 
 export type Dashboard = {
@@ -74,7 +133,28 @@ export type AdminUser = {
   fio: string;
   role: string;
   site_code: string | null;
+  site_name: string | null;
   status: string;
+  last_login_at: string | null;
+};
+
+export type SecondEvalRow = {
+  assignment_id: number;
+  employee_id: number;
+  tab_no: string;
+  fio: string;
+  is_candidate: boolean;
+  site_code: string | null;
+  site_name: string | null;
+  evaluate: boolean;
+  primary_user_id: number | null;
+  primary_fio: string | null;
+  primary_eval_status: "none" | "draft" | "submitted";
+  dual_enabled: boolean;
+  secondary_user_id: number | null;
+  secondary_fio: string | null;
+  secondary_eval_status: "none" | "draft" | "submitted";
+  version: number;
 };
 
 export type AdminEmployee = {
@@ -94,9 +174,11 @@ export type AdminAssignment = {
   is_candidate: boolean;
   site_code: string | null;
   site_name: string | null;
+  position_fact?: string | null;
   evaluate: boolean;
   primary_fio: string | null;
   primary_tab: string | null;
+  primary_role?: string | null;
   primary_user_id: number | null;
   dual_enabled: boolean;
   secondary_user_id: number | null;
@@ -118,25 +200,43 @@ export type Ticket = {
   updated_at?: string | null;
 };
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  opts?: { timeoutMs?: number },
+): Promise<T> {
   const headers = new Headers(init.headers || {});
   if (init.body) headers.set("Content-Type", "application/json");
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const url = apiUrl(path);
-  const res = await fetch(url, { ...init, headers });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body.detail || JSON.stringify(body);
-    } catch {
-      /* ignore */
+  const timeoutMs = opts?.timeoutMs ?? 45000;
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...init, headers, signal: ctrl.signal });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = await res.json();
+        detail = body.detail || JSON.stringify(body);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
     }
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    if (res.status === 204) return undefined as T;
+    return res.json() as Promise<T>;
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error(
+        `Сервер не отвечает (таймаут ${Math.round(timeoutMs / 1000)} с). Проверьте туннель/связь и попробуйте ещё раз.`,
+      );
+    }
+    throw e;
+  } finally {
+    window.clearTimeout(timer);
   }
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
 }
 
 /** Базовый адрес сервера. Пусто = тот же хост (веб из FastAPI). В Android APK обязателен. */
@@ -212,6 +312,20 @@ export async function apiSaveEvaluation(
   }>(path, { method: "POST", body: JSON.stringify(body) });
 }
 
+export async function apiGetEvaluation(evaluationId: number) {
+  return request<{
+    id: number;
+    status: string;
+    score_quality: number | null;
+    score_discipline: number | null;
+    score_safety: number | null;
+    score_skills: number | null;
+    score_versatility: number | null;
+    comment: string | null;
+    avg_score: number | null;
+  }>(`/api/field/evaluations/${evaluationId}`);
+}
+
 export async function apiCreateTicket(body: {
   message: string;
   assignment_id?: number | null;
@@ -228,6 +342,7 @@ export async function apiImportAll() {
   return request<{ source: string; added: number; updated: number; skipped: number; errors: string[] }[]>(
     "/api/admin/import/all",
     { method: "POST" },
+    { timeoutMs: 300000 },
   );
 }
 
@@ -279,9 +394,55 @@ export async function apiPatchAssignment(
   return request(`/api/admin/assignments/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
-export async function apiUsers(role?: string) {
-  const qs = role ? `?role=${encodeURIComponent(role)}` : "";
-  return request<AdminUser[]>(`/api/admin/users${qs}`);
+export async function apiBulkAssignments(body: {
+  assignment_ids: number[];
+  primary_user_id?: number | null;
+  evaluate?: boolean | null;
+}) {
+  return request<{
+    ok: boolean;
+    updated: number;
+    errors: string[];
+    primary_fio: string | null;
+  }>("/api/admin/assignment-bulk", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function apiUsers(role?: string, all = false) {
+  const qs = new URLSearchParams();
+  if (role) qs.set("role", role);
+  if (all) qs.set("all", "true");
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return request<AdminUser[]>(`/api/admin/users${suffix}`);
+}
+
+export async function apiPatchUser(
+  id: number,
+  body: {
+    role?: string;
+    site_code?: string | null;
+    site_name?: string | null;
+    status?: string;
+    password?: string;
+  },
+) {
+  return request<{ ok: boolean; user: AdminUser }>(`/api/admin/users/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function apiSecondEvaluation() {
+  return request<SecondEvalRow[]>("/api/admin/second-evaluation");
+}
+
+export async function apiAssignSecondary(body: {
+  assignment_ids: number[];
+  secondary_user_id: number | null;
+}) {
+  return request<{ ok: boolean; updated: number; errors: string[]; secondary_fio: string | null }>(
+    "/api/admin/second-evaluation/assign",
+    { method: "POST", body: JSON.stringify(body) },
+  );
 }
 
 export async function apiEmployees(params?: { q?: string; candidates?: boolean }) {
@@ -398,6 +559,56 @@ export async function apiEscalations() {
 
 export async function apiRegistryRows() {
   return request<RegistryRow[]>("/api/registry/rows");
+}
+
+export async function apiSiteOverview() {
+  return request<SiteOverview>("/api/field/site-overview");
+}
+
+export async function apiQuestionnaire(assignmentId: number) {
+  return request<Questionnaire>(`/api/registry/questionnaire/${assignmentId}`);
+}
+
+export async function apiCreateUser(body: {
+  tab_no: string;
+  fio: string;
+  role: string;
+  site_code?: string | null;
+  site_name?: string | null;
+  status?: string;
+  password: string;
+}) {
+  return request<{ ok: boolean; user_id: number }>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** Скачивание файла с авторизацией (Excel/PDF выгрузки). */
+export async function apiDownload(path: string, filename: string) {
+  const token = getToken();
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(apiUrl(path), { headers });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail || JSON.stringify(body);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export async function apiUpsertKvyr(body: {

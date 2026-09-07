@@ -1,8 +1,8 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import admin, field, registry
@@ -93,11 +93,31 @@ if dist.exists():
     if assets.exists():
         app.mount("/assets", StaticFiles(directory=str(assets)), name="assets")
 
-    @app.get("/{full_path:path}")
-    def spa(full_path: str = ""):
-        if full_path.startswith("api/"):
-            return {"detail": "Not Found"}
-        candidate = dist / full_path
-        if full_path and candidate.exists() and candidate.is_file():
+    @app.middleware("http")
+    async def spa_fallback(request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/api"):
+            return response
+        if request.method != "GET" or response.status_code != 404:
+            return response
+        # Не отдаём HTML на отсутствующие API — только на страницы UI
+        candidate = dist / path.lstrip("/")
+        if path != "/" and candidate.exists() and candidate.is_file():
             return FileResponse(candidate)
+        index = dist / "index.html"
+        if index.exists():
+            return FileResponse(index)
+        return response
+
+    @app.get("/")
+    def spa_root():
         return FileResponse(dist / "index.html")
+else:
+
+    @app.get("/")
+    def no_frontend():
+        return JSONResponse(
+            {"detail": "Frontend dist не собран. Выполните npm run build в frontend/"},
+            status_code=503,
+        )

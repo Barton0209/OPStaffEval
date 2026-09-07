@@ -31,8 +31,11 @@ from app.schemas import (
 from app.security import authenticate_user, create_access_token
 from app.services.evaluations import (
     close_urgent_if_complete,
+    covering_evaluator_ids,
     link_evaluation_to_period_assignment,
+    site_matches,
 )
+from app.services.imports import nf
 from app.services.events import emit_event
 
 router = APIRouter(prefix="/api/field", tags=["field"])
@@ -99,6 +102,8 @@ def login(body: LoginIn, db: Session = Depends(get_db)) -> TokenOut:
         fio=user.fio,
         tab_no=user.tab_no,
         organization_id=user.organization_id,
+        site_code=user.site_code,
+        site_name=user.site_name,
     )
 
 
@@ -121,6 +126,19 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
     items: list[AssignmentListItem] = []
     substitute_for = _active_substitute_ids(db, user, period.id)
 
+    # Все сданные анкеты периода одним запросом — для «общей оценки» и статуса второго оценщика
+    submitted_by_key: dict[tuple[int, int], Evaluation] = {}
+    for e in (
+        db.query(Evaluation)
+        .join(Assignment, Assignment.id == Evaluation.assignment_id)
+        .filter(
+            Assignment.period_id == period.id,
+            Evaluation.status == EvaluationStatus.submitted,
+        )
+        .all()
+    ):
+        submitted_by_key[(e.assignment_id, e.evaluator_id)] = e
+
     # Planned assignments
     q = (
         db.query(Assignment)
@@ -141,7 +159,13 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
             my_role = "secondary"
         if not my_role:
             continue
-        if user.role not in (UserRole.master, UserRole.foreman, UserRole.admin_op, UserRole.admin):
+        if user.role not in (
+            UserRole.master,
+            UserRole.foreman,
+            UserRole.admin_op,
+            UserRole.admin,
+            UserRole.site_chief,
+        ):
             continue
 
         ev = (
@@ -154,6 +178,32 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
             .first()
         )
         emp: Employee = asg.employee
+
+        # Общая оценка (1-й + 2-й) — видна, когда обе анкеты сданы; баллы другого оценщика не раскрываются
+        combined: float | None = None
+        peer_submitted = False
+        if asg.dual_enabled and asg.secondary_user_id:
+            peer_original = asg.secondary_user_id if my_role == "primary" else asg.primary_user_id
+            peer_ids = covering_evaluator_ids(
+                db,
+                organization_id=user.organization_id,
+                period_id=period.id,
+                original_user_id=peer_original,
+            )
+            peer_ev = None
+            for pid in peer_ids:
+                peer_ev = submitted_by_key.get((asg.id, pid))
+                if peer_ev:
+                    break
+            peer_submitted = peer_ev is not None
+            my_submitted = ev if (ev and ev.status == EvaluationStatus.submitted) else None
+            if my_submitted and peer_ev:
+                my_avg = _avg(my_submitted)
+                peer_avg = _avg(peer_ev)
+                if my_avg is not None and peer_avg is not None:
+                    combined = round((my_avg + peer_avg) / 2, 2)
+
+        show_rate = user.role == UserRole.site_chief
         items.append(
             AssignmentListItem(
                 assignment_id=asg.id,
@@ -172,6 +222,10 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
                 evaluation_status=ev.status if ev else None,
                 assignment_version=asg.version,
                 is_urgent=False,
+                hourly_rate=emp.hourly_rate if show_rate else None,
+                rate_updated_at=emp.rate_updated_at if show_rate else None,
+                combined_score=combined if show_rate else None,
+                peer_submitted=peer_submitted,
             )
         )
 
@@ -202,7 +256,7 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
             emp = ur.employee
             items.append(
                 AssignmentListItem(
-                    assignment_id=ev.assignment_id or 0,
+                    assignment_id=(ev.assignment_id if ev else None) or 0,
                     employee_id=emp.id,
                     tab_no=emp.tab_no,
                     fio=emp.fio,
@@ -253,6 +307,18 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
         ):
             continue
         asg = db.get(Assignment, ev.assignment_id) if ev.assignment_id else None
+        combined = None
+        peer_submitted = False
+        if asg and asg.dual_enabled and asg.secondary_user_id:
+            my_role_done = "primary" if ev.evaluator_id == asg.primary_user_id else "secondary"
+            peer_id = asg.secondary_user_id if my_role_done == "primary" else asg.primary_user_id
+            peer_ev = submitted_by_key.get((asg.id, peer_id)) if peer_id else None
+            peer_submitted = peer_ev is not None
+            if peer_ev:
+                my_avg = _avg(ev)
+                peer_avg = _avg(peer_ev)
+                if my_avg is not None and peer_avg is not None:
+                    combined = round((my_avg + peer_avg) / 2, 2)
         items.append(
             AssignmentListItem(
                 assignment_id=ev.assignment_id or 0,
@@ -272,6 +338,10 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
                 assignment_version=asg.version if asg else 1,
                 is_urgent=bool(ev.urgent_request_id),
                 urgent_request_id=ev.urgent_request_id,
+                hourly_rate=emp.hourly_rate,
+                rate_updated_at=emp.rate_updated_at,
+                combined_score=combined,
+                peer_submitted=peer_submitted,
             )
         )
         if ev.assignment_id:
@@ -330,6 +400,9 @@ def save_assignment_evaluation(
     )
     substitute_for = _active_substitute_ids(db, user, asg.period_id)
     if asg.primary_user_id in substitute_for:
+        allowed = True
+    if asg.dual_enabled and asg.secondary_user_id in substitute_for:
+        # заместитель второго оценщика тоже имеет право (как в списке my_assignments)
         allowed = True
     if not allowed:
         raise HTTPException(status_code=403, detail="Нет доступа к этой анкете")
@@ -558,7 +631,13 @@ def create_ticket(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ListTicket:
-    if user.role not in (UserRole.master, UserRole.foreman, UserRole.admin_op, UserRole.admin):
+    if user.role not in (
+        UserRole.master,
+        UserRole.foreman,
+        UserRole.admin_op,
+        UserRole.admin,
+        UserRole.site_chief,
+    ):
         raise HTTPException(status_code=403, detail="Недостаточно прав")
     if not body.message or not body.message.strip():
         raise HTTPException(status_code=400, detail="Укажите сообщение")
@@ -596,6 +675,127 @@ def create_ticket(
         created_at=ticket.created_at,
         updated_at=ticket.updated_at,
     )
+
+
+@router.get("/site-overview")
+def site_overview(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Сводка по участку начальника: прорабы/мастера, прогресс оценки, тарифная сетка, дата старта."""
+    if user.role != UserRole.site_chief:
+        raise HTTPException(status_code=403, detail="Только для начальника участка")
+    period = (
+        db.query(EvaluationPeriod)
+        .filter(EvaluationPeriod.organization_id == user.organization_id, EvaluationPeriod.is_open.is_(True))
+        .order_by(EvaluationPeriod.id.desc())
+        .first()
+    )
+    if not period:
+        raise HTTPException(status_code=404, detail="Нет открытого периода")
+
+    if not nf(user.site_name):
+        return {
+            "site_name": None,
+            "period_code": period.code,
+            "period_starts_on": period.starts_on,
+            "evaluation_started_on": None,
+            "tariff_min": None,
+            "tariff_max": None,
+            "total": 0,
+            "masters": [],
+            "warning": "Укажите участок в «Настройках» у администратора — иначе сводка и реестр участка недоступны",
+        }
+
+    assignments = (
+        db.query(Assignment)
+        .options(joinedload(Assignment.employee))
+        .filter(
+            Assignment.organization_id == user.organization_id,
+            Assignment.period_id == period.id,
+            Assignment.evaluate.is_(True),
+        )
+        .all()
+    )
+    assignments = [a for a in assignments if site_matches(user.site_name, a.site_name)]
+
+    asg_ids = [a.id for a in assignments]
+    submitted_evs = (
+        db.query(Evaluation)
+        .filter(
+            Evaluation.assignment_id.in_(asg_ids),
+            Evaluation.status == EvaluationStatus.submitted,
+        )
+        .all()
+        if asg_ids
+        else []
+    )
+    submitted_keys = {(e.assignment_id, e.evaluator_id) for e in submitted_evs}
+    started = min((e.submitted_at for e in submitted_evs if e.submitted_at), default=None)
+
+    # Прогресс по каждому прорабу/мастеру участка (с учётом заместителей)
+    per_master: dict[int, dict] = {}
+    for a in assignments:
+        if not a.primary_user_id:
+            continue
+        slot = per_master.setdefault(a.primary_user_id, {"total": 0, "submitted": 0})
+        slot["total"] += 1
+        primary_ids = covering_evaluator_ids(
+            db,
+            organization_id=user.organization_id,
+            period_id=period.id,
+            original_user_id=a.primary_user_id,
+        )
+        secondary_ids = (
+            covering_evaluator_ids(
+                db,
+                organization_id=user.organization_id,
+                period_id=period.id,
+                original_user_id=a.secondary_user_id,
+            )
+            if a.dual_enabled and a.secondary_user_id
+            else set()
+        )
+        done = any((a.id, uid) in submitted_keys for uid in primary_ids)
+        if not done:
+            # срочная: любая сданная не от роли 2-го
+            done = any(
+                k[0] == a.id and k[1] not in secondary_ids for k in submitted_keys
+            )
+        if done:
+            slot["submitted"] += 1
+
+    masters_rows = []
+    if per_master:
+        users = {
+            u.id: u
+            for u in db.query(User).filter(User.id.in_(per_master.keys())).all()
+        }
+        for uid, slot in per_master.items():
+            u = users.get(uid)
+            if not u:
+                continue
+            masters_rows.append(
+                {
+                    "user_id": uid,
+                    "fio": u.fio,
+                    "tab_no": u.tab_no,
+                    "role": u.role.value,
+                    "total": slot["total"],
+                    "submitted": slot["submitted"],
+                    "remaining": slot["total"] - slot["submitted"],
+                }
+            )
+        masters_rows.sort(key=lambda r: (-r["remaining"], r["fio"]))
+
+    rates = [a.employee.hourly_rate for a in assignments if a.employee and a.employee.hourly_rate]
+    return {
+        "site_name": user.site_name,
+        "period_code": period.code,
+        "period_starts_on": period.starts_on,
+        "evaluation_started_on": started.date() if started else None,
+        "tariff_min": min(rates) if rates else None,
+        "tariff_max": max(rates) if rates else None,
+        "total": len(assignments),
+        "masters": masters_rows,
+    }
 
 
 @router.get("/tickets", response_model=list[TicketOut])

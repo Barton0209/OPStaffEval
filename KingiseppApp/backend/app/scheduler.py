@@ -63,10 +63,12 @@ def _escalation_count(db: Session, period_id: int) -> int:
         )
         submitted = (
             db.query(Evaluation)
+            .join(Assignment, Assignment.id == Evaluation.assignment_id)
             .filter(
                 Evaluation.evaluator_id == uid,
                 Evaluation.status == EvaluationStatus.submitted,
                 Evaluation.assignment_id.is_not(None),
+                Assignment.period_id == period_id,
             )
             .count()
         )

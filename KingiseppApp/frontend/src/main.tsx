@@ -126,7 +126,7 @@ function App() {
         </header>
 
         <div className="login-banner" aria-hidden>
-          <img src="./logo-velesstroy.png" alt="" />
+          <img src="./brand/logo-banner.png" alt="" />
         </div>
 
         {(showServer || isNative) && (
@@ -203,14 +203,23 @@ function App() {
   const isChief = user.role === "site_chief";
   const isField = user.role === "master" || user.role === "foreman";
 
-  if (isChief || (isAdmin && view === "registry")) {
+  if (isChief) {
+    // ЛК начальника участка = ЛК прораба/мастера + сводка участка; реестр — по кнопке
+    if (view === "registry") {
+      return <RegistryApp user={user} onLogout={logout} onBack={() => setView("home")} />;
+    }
     return (
-      <RegistryApp
+      <FieldApp
         user={user}
+        online={online}
         onLogout={logout}
-        onBack={isAdmin ? () => setView("home") : undefined}
+        onOpenRegistry={() => setView("registry")}
       />
     );
+  }
+
+  if (isAdmin && view === "registry") {
+    return <RegistryApp user={user} onLogout={logout} onBack={() => setView("home")} />;
   }
 
   if (isAdmin) {

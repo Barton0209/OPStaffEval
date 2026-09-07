@@ -1,5 +1,11 @@
-const CACHE = "kingisepp-shell-v3";
-const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
+const CACHE = "kingisepp-shell-v5";
+const SHELL = [
+  "./",
+  "./index.html",
+  "./manifest.webmanifest",
+  "./brand/header-banner.png",
+  "./brand/logo-banner.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   apiCreateTicket,
+  apiGetEvaluation,
   apiMyAssignments,
   apiMyTickets,
   apiSaveEvaluation,
+  apiSiteOverview,
   type AssignmentItem,
   type SessionUser,
+  type SiteOverview,
   type Ticket,
 } from "./api";
 import { enqueueOutbox, flushOutbox, listOutbox } from "./offline";
@@ -61,11 +64,13 @@ function emptyScores(): Scores {
 function roleRu(role: string) {
   if (role === "master") return "Мастер";
   if (role === "foreman") return "Прораб (производитель работ)";
+  if (role === "site_chief") return "Начальник участка";
   return role;
 }
 
 function anketaTitle(role: string) {
   if (role === "foreman") return "Анкета по оценке деятельности рабочего персонала (Производитель работ)";
+  if (role === "site_chief") return "Анкета по оценке деятельности рабочего персонала (Начальник участка)";
   return "Анкета по оценке деятельности рабочего персонала (Мастер)";
 }
 
@@ -81,9 +86,11 @@ type Props = {
   user: SessionUser;
   online: boolean;
   onLogout: () => void;
+  onOpenRegistry?: () => void;
 };
 
-export function FieldApp({ user, online, onLogout }: Props) {
+export function FieldApp({ user, online, onLogout, onOpenRegistry }: Props) {
+  const isChief = user.role === "site_chief";
   const [items, setItems] = useState<AssignmentItem[]>([]);
   const [selected, setSelected] = useState<AssignmentItem | null>(null);
   const [scores, setScores] = useState<Scores>(emptyScores());
@@ -95,21 +102,36 @@ export function FieldApp({ user, online, onLogout }: Props) {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [filter, setFilter] = useState("");
-  const [onlyTodo, setOnlyTodo] = useState(true);
-  const [listMode, setListMode] = useState<"todo" | "done" | "urgent" | "all">("todo");
+  const [listMode, setListMode] = useState<"todo" | "done" | "urgent">("todo");
+  const [readOnly, setReadOnly] = useState(false);
+  const [loadingForm, setLoadingForm] = useState(false);
   const [myTickets, setMyTickets] = useState<Ticket[]>([]);
-  const [showMyTickets, setShowMyTickets] = useState(true);
+  const [showMyTickets, setShowMyTickets] = useState(false);
+  const [overview, setOverview] = useState<SiteOverview | null>(null);
+  const [showOverview, setShowOverview] = useState(true);
   const appealRef = useRef<HTMLTextAreaElement>(null);
+  const openSeq = useRef(0);
 
   async function refreshList() {
     try {
       const data = await apiMyAssignments();
       setItems(data);
-      setPending((await listOutbox()).length);
+      try {
+        setPending((await listOutbox()).length);
+      } catch {
+        /* IndexedDB может быть недоступен */
+      }
       try {
         setMyTickets(await apiMyTickets());
       } catch {
         /* ignore for older sessions */
+      }
+      if (isChief) {
+        try {
+          setOverview(await apiSiteOverview());
+        } catch {
+          /* сводка участка недоступна */
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось загрузить список");
@@ -117,17 +139,30 @@ export function FieldApp({ user, online, onLogout }: Props) {
   }
 
   useEffect(() => {
-    refreshList();
+    void refreshList();
   }, []);
 
   useEffect(() => {
     if (!online) return;
+    let cancelled = false;
     (async () => {
-      const n = await flushOutbox();
-      if (n) setInfo(`Отправлено сохранённых офлайн анкет: ${n}`);
-      setPending((await listOutbox()).length);
-      await refreshList();
+      try {
+        const n = await flushOutbox();
+        if (cancelled) return;
+        if (n) setInfo(`Отправлено сохранённых офлайн анкет: ${n}`);
+        try {
+          setPending((await listOutbox()).length);
+        } catch {
+          /* ignore */
+        }
+        await refreshList();
+      } catch {
+        /* сеть/офлайн-очередь не должны блокировать UI */
+      }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [online]);
 
   const stats = useMemo(() => {
@@ -143,67 +178,109 @@ export function FieldApp({ user, online, onLogout }: Props) {
       if (listMode === "todo" && i.evaluation_status === "submitted") return false;
       if (listMode === "done" && i.evaluation_status !== "submitted") return false;
       if (listMode === "urgent" && !(i.is_urgent && i.evaluation_status !== "submitted")) return false;
-      if (onlyTodo && listMode === "all" && i.evaluation_status === "submitted") return false;
       if (!query) return true;
       return i.fio.toLowerCase().includes(query) || i.tab_no.toLowerCase().includes(query);
     });
-  }, [items, filter, onlyTodo, listMode]);
+  }, [items, filter, listMode]);
 
   const avg = useMemo(() => {
     const vals = CRITERIA.map((c) => scores[c.key]);
     return (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
   }, [scores]);
 
-  function openItem(item: AssignmentItem) {
+  async function openItem(item: AssignmentItem) {
+    const seq = ++openSeq.current;
     setSelected(item);
     setScores(emptyScores());
     setComment("");
     setInfo("");
     setError("");
     setShowTicket(false);
+    const submitted = item.evaluation_status === "submitted";
+    setReadOnly(submitted);
+    if (!item.evaluation_id) return;
+    setLoadingForm(true);
+    try {
+      const ev = await apiGetEvaluation(item.evaluation_id);
+      if (seq !== openSeq.current) return;
+      setScores({
+        score_quality: ev.score_quality ?? 3,
+        score_discipline: ev.score_discipline ?? 3,
+        score_safety: ev.score_safety ?? 3,
+        score_skills: ev.score_skills ?? 3,
+        score_versatility: ev.score_versatility ?? 3,
+      });
+      setComment(ev.comment || "");
+      setReadOnly(ev.status === "submitted");
+      if (ev.status === "submitted" && ev.avg_score != null) {
+        setInfo(`Оценка уже отправлена. Средний балл: ${ev.avg_score}`);
+      }
+    } catch (e) {
+      if (seq !== openSeq.current) return;
+      setError(e instanceof Error ? e.message : "Не удалось загрузить анкету");
+    } finally {
+      if (seq === openSeq.current) setLoadingForm(false);
+    }
   }
 
   async function save(submit: boolean) {
-    if (!selected) return;
+    if (!selected || readOnly || busy) return;
     setBusy(true);
     setError("");
     setInfo("");
-    const payload = {
-      ...scores,
-      comment,
-      assignment_version: selected.assignment_version,
-      client_mutation_id: crypto.randomUUID(),
-    };
+    const current = selected;
     try {
+      const payload = {
+        ...scores,
+        comment,
+        assignment_version: current.assignment_version,
+        client_mutation_id:
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `m-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      };
       if (!navigator.onLine) {
         await enqueueOutbox({
-          kind: selected.is_urgent ? "urgent" : "assignment",
-          targetId: selected.is_urgent ? selected.urgent_request_id! : selected.assignment_id,
+          kind: current.is_urgent ? "urgent" : "assignment",
+          targetId: current.is_urgent ? current.urgent_request_id! : current.assignment_id,
           submit,
           body: payload,
           createdAt: Date.now(),
         });
-        setPending((await listOutbox()).length);
+        try {
+          setPending((await listOutbox()).length);
+        } catch {
+          /* ignore */
+        }
         setInfo("Сохранено без связи. Уйдёт автоматически, когда появится интернет.");
-        if (submit) setSelected(null);
+        if (submit) {
+          setSelected(null);
+          // Не переключаем на «Сданные»: в офлайне статус ещё не submitted
+          setListMode("todo");
+        }
         return;
       }
       const res = await apiSaveEvaluation(
-        selected.is_urgent ? "urgent" : "assignment",
-        selected.is_urgent ? selected.urgent_request_id! : selected.assignment_id,
+        current.is_urgent ? "urgent" : "assignment",
+        current.is_urgent ? current.urgent_request_id! : current.assignment_id,
         payload,
         submit,
       );
       if (res.conflict) {
         setError(res.conflict_message || "Список изменился — обновите и оцените снова");
-        await refreshList();
+        void refreshList();
         return;
       }
-      setInfo(submit ? `Оценка отправлена. Средний балл: ${res.avg_score}` : `Черновик сохранён. Средний: ${res.avg_score}`);
       if (submit) {
+        // Сразу выходим из анкеты — не ждём перезагрузку списка (она и «зависала» UI)
         setSelected(null);
-        await refreshList();
+        setListMode("done");
+        setInfo(`Оценка отправлена. Средний балл: ${res.avg_score}`);
+        setBusy(false);
+        void refreshList();
+        return;
       }
+      setInfo(`Черновик сохранён. Средний: ${res.avg_score}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Не удалось сохранить");
     } finally {
@@ -269,6 +346,12 @@ export function FieldApp({ user, online, onLogout }: Props) {
               <div className="muted">Участок: {selected.site_name || "—"}</div>
               {selected.hire_date && <div className="muted">Дата приёма: {selected.hire_date}</div>}
               {selected.experience_text && <div className="muted">Стаж: {selected.experience_text}</div>}
+              {isChief && selected.hourly_rate != null && (
+                <div className="muted">
+                  ЧТС: <strong>{selected.hourly_rate} ₽/ч</strong>
+                  {selected.rate_updated_at ? ` · изм. ${selected.rate_updated_at}` : ""}
+                </div>
+              )}
               {selected.last_final_score != null && (
                 <div className="muted">Прошлый итог: {selected.last_final_score}</div>
               )}
@@ -278,13 +361,16 @@ export function FieldApp({ user, online, onLogout }: Props) {
               <div className="meta-value">{user.fio}</div>
               <div className="muted">{roleRu(user.role)} · таб. {user.tab_no}</div>
               <div className="muted">Дата оценки: {today}</div>
-              {selected.is_urgent && <div className="pill danger">Срочная оценка</div>}
+              {selected.is_urgent && !readOnly && <div className="pill danger">Срочная оценка</div>}
+              {readOnly && <div className="pill ok">Отправлено</div>}
               <div className="muted">
                 Роль в закреплении:{" "}
                 {selected.my_role === "secondary" ? "второй оценщик" : "основной оценщик"}
               </div>
             </div>
           </div>
+
+          {loadingForm && <p className="muted">Загрузка сохранённых баллов…</p>}
 
           <p className="anketa-intro">
             Оцените, пожалуйста, согласно предложенным индикаторам по пятибалльной шкале, который, по вашему
@@ -310,6 +396,23 @@ export function FieldApp({ user, online, onLogout }: Props) {
             Средний балл: <strong>{avg}</strong>
           </div>
 
+          {isChief && readOnly && (
+            <div className="anketa-combined">
+              {selected.combined_score != null ? (
+                <>
+                  Общая оценка (с учётом 1-го оценщика): <strong>{selected.combined_score}</strong>
+                  <div className="muted" style={{ fontSize: "0.8rem" }}>
+                    Баллы первого оценщика не отображаются
+                  </div>
+                </>
+              ) : (
+                <span className="muted">
+                  1-й оценщик ещё не сдал анкету — общая оценка появится после его сдачи.
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="criteria-list">
             <div className="criteria-head">
               <span>Общие параметры</span>
@@ -328,6 +431,7 @@ export function FieldApp({ user, online, onLogout }: Props) {
                     <button
                       key={n}
                       type="button"
+                      disabled={readOnly || loadingForm || busy}
                       className={scores[c.key] === n ? "score-pill active" : "score-pill"}
                       onClick={() => setScores({ ...scores, [c.key]: n })}
                     >
@@ -341,20 +445,33 @@ export function FieldApp({ user, online, onLogout }: Props) {
 
           <label>
             Рекомендации / комментарии
-            <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={3} />
+            <textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              rows={3}
+              disabled={readOnly || loadingForm || busy}
+              readOnly={readOnly}
+            />
           </label>
 
           {error && <p className="error">{error}</p>}
           {info && <p className="ok-text">{info}</p>}
 
-          <div className="actions">
-            <button type="button" disabled={busy} onClick={() => save(false)}>
-              Черновик
-            </button>
-            <button type="button" className="primary" disabled={busy} onClick={() => save(true)}>
-              Отправить оценку
-            </button>
-          </div>
+          {!readOnly && (
+            <div className="actions">
+              <button type="button" disabled={busy || loadingForm} onClick={() => save(false)}>
+                Черновик
+              </button>
+              <button type="button" className="primary" disabled={busy || loadingForm} onClick={() => save(true)}>
+                Отправить оценку
+              </button>
+            </div>
+          )}
+          {readOnly && (
+            <p className="muted" style={{ marginTop: "0.5rem" }}>
+              Анкета уже отправлена. Изменить баллы нельзя — при ошибке напишите обращение администратору.
+            </p>
+          )}
 
           <p className="muted" style={{ marginTop: "0.75rem" }}>
             Непосредственный руководитель: {user.fio}
@@ -387,7 +504,11 @@ export function FieldApp({ user, online, onLogout }: Props) {
         <div>
           <p className="brand">{roleRu(user.role)} · мой список</p>
           <h1>{user.fio}</h1>
-          <p className="muted">Нажмите на сотрудника, чтобы поставить оценку</p>
+          <p className="muted">
+            {isChief
+              ? `Участок: ${user.site_name || "—"}. Нажмите на сотрудника, чтобы поставить оценку`
+              : "Нажмите на сотрудника, чтобы поставить оценку"}
+          </p>
         </div>
         <div className="right">
           <span className={`pill ${online ? "ok" : "warn"}`}>{online ? "Сеть" : "Офлайн"}</span>
@@ -395,18 +516,82 @@ export function FieldApp({ user, online, onLogout }: Props) {
         </div>
       </header>
 
+      {isChief && overview && (
+        <section className="panel chief-overview">
+          <button type="button" className="link" onClick={() => setShowOverview((v) => !v)}>
+            {showOverview ? "▾ Сводка по участку" : "▸ Сводка по участку"}
+          </button>
+          {showOverview && (
+            <>
+              {overview.warning && <p className="error">{overview.warning}</p>}
+              <div className="chief-overview-meta">
+                <span>
+                  Период: <strong>{overview.period_code}</strong>
+                </span>
+                <span>
+                  Начало оценки:{" "}
+                  <strong>{overview.evaluation_started_on || overview.period_starts_on || "—"}</strong>
+                </span>
+                <span>
+                  Тарифная сетка:{" "}
+                  <strong>
+                    {overview.tariff_min != null && overview.tariff_max != null
+                      ? `${overview.tariff_min} — ${overview.tariff_max} ₽/ч`
+                      : "—"}
+                  </strong>
+                </span>
+              </div>
+              {overview.masters.length > 0 ? (
+                <div className="excel-wrap">
+                  <table className="excel-table">
+                    <thead>
+                      <tr>
+                        <th>Прораб / мастер</th>
+                        <th>На оценке</th>
+                        <th>Оценено</th>
+                        <th>Осталось</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {overview.masters.map((m) => (
+                        <tr key={m.user_id}>
+                          <td>
+                            {m.fio} <span className="muted">({m.role === "master" ? "мастер" : "прораб"})</span>
+                          </td>
+                          <td>{m.total}</td>
+                          <td>{m.submitted}</td>
+                          <td>{m.remaining}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="muted">На вашем участке пока нет прорабов/мастеров с назначенными людьми.</p>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {isChief && onOpenRegistry && (
+        <button type="button" className="primary" style={{ width: "100%", marginBottom: "0.75rem" }} onClick={onOpenRegistry}>
+          Реестр оценок участка →
+        </button>
+      )}
+
       <section className="field-summary">
-        <button type="button" className={`metric warn clickable ${listMode === "todo" ? "metric-active" : ""}`} onClick={() => { setListMode("todo"); setOnlyTodo(true); }}>
+        <button type="button" className={`metric warn clickable ${listMode === "todo" ? "metric-active" : ""}`} onClick={() => setListMode("todo")}>
           <div className="metric-ico" aria-hidden>⏳</div>
           <div className="label">Осталось</div>
           <div className="value">{stats.todo}</div>
         </button>
-        <button type="button" className={`metric ok clickable ${listMode === "done" ? "metric-active" : ""}`} onClick={() => { setListMode("done"); setOnlyTodo(false); }}>
+        <button type="button" className={`metric ok clickable ${listMode === "done" ? "metric-active" : ""}`} onClick={() => setListMode("done")}>
           <div className="metric-ico" aria-hidden>✅</div>
           <div className="label">Готово</div>
           <div className="value">{stats.done}</div>
         </button>
-        <button type="button" className={`metric clickable ${stats.urgent ? "danger" : ""} ${listMode === "urgent" ? "metric-active" : ""}`} onClick={() => { setListMode("urgent"); setOnlyTodo(false); }}>
+        <button type="button" className={`metric clickable ${stats.urgent ? "danger" : ""} ${listMode === "urgent" ? "metric-active" : ""}`} onClick={() => setListMode("urgent")}>
           <div className="metric-ico" aria-hidden>⚡</div>
           <div className="label">Срочно</div>
           <div className="value">{stats.urgent}</div>
@@ -457,10 +642,6 @@ export function FieldApp({ user, online, onLogout }: Props) {
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
       />
-      <label className="check" style={{ marginBottom: "0.75rem" }}>
-        <input type="checkbox" checked={onlyTodo} onChange={(e) => setOnlyTodo(e.target.checked)} />
-        показывать только не оценённых
-      </label>
 
       {error && <p className="error">{error}</p>}
       {info && <p className="ok-text">{info}</p>}
@@ -470,7 +651,7 @@ export function FieldApp({ user, online, onLogout }: Props) {
           <div className="panel">
             <p className="muted">
               {items.length === 0
-                ? "Пока нет людей для оценки. Администратор должен назначить вас основным оценщиком или выдать срочную заявку."
+                ? "Пока нет людей для оценки. Администратор должен закрепить вас и нажать «Отправить для оценки»."
                 : listMode === "done"
                   ? "Пока нет отправленных анкет."
                   : listMode === "urgent"
@@ -484,16 +665,38 @@ export function FieldApp({ user, online, onLogout }: Props) {
             key={`${item.is_urgent ? "u" : "a"}-${item.assignment_id}-${item.urgent_request_id}-${item.employee_id}`}
             className="list-item"
             type="button"
-            onClick={() => openItem(item)}
+            onClick={() => void openItem(item)}
           >
             <div>
               <strong>{item.fio}</strong>
               <p className="muted">
                 {item.tab_no} · {item.site_name || item.site_code || "площадка —"}
               </p>
+              {isChief && item.hourly_rate != null && (
+                <p className="muted" style={{ margin: 0 }}>
+                  ЧТС: {item.hourly_rate} ₽/ч
+                  {item.rate_updated_at ? ` · изм. ${item.rate_updated_at}` : ""}
+                </p>
+              )}
             </div>
             <div className="badges">
-              {item.is_urgent && <span className="pill danger">Срочно</span>}
+              {item.is_urgent && item.evaluation_status !== "submitted" && (
+                <span className="pill danger">Срочно</span>
+              )}
+              {isChief && item.combined_score != null && (
+                <span className="pill ok" title="Общая оценка с учётом 1-го оценщика">
+                  Общая: {item.combined_score}
+                </span>
+              )}
+              {isChief &&
+                item.my_role === "secondary" &&
+                item.evaluation_status === "submitted" &&
+                item.combined_score == null &&
+                !item.peer_submitted && (
+                  <span className="pill info" title="1-й оценщик ещё не сдал анкету">
+                    Ждём 1-го
+                  </span>
+                )}
               <span
                 className={`pill ${
                   item.evaluation_status === "submitted" ? "ok" : item.evaluation_status === "draft" ? "info" : "warn"
@@ -507,13 +710,34 @@ export function FieldApp({ user, online, onLogout }: Props) {
       </div>
 
       <nav className="bottom-nav" aria-label="Действия">
-        <button type="button" className="active" onClick={() => refreshList()}>
-          <span className="ico">☰</span>
-          Список
+        <button type="button" className={listMode === "todo" ? "active" : ""} onClick={() => setListMode("todo")}>
+          <span className="ico">⏳</span>
+          К оценке
         </button>
-        <button type="button" onClick={() => setOnlyTodo((v) => !v)}>
-          <span className="ico">{onlyTodo ? "✓" : "◎"}</span>
-          {onlyTodo ? "Только новые" : "Все"}
+        <button type="button" className={listMode === "done" ? "active" : ""} onClick={() => setListMode("done")}>
+          <span className="ico">✓</span>
+          Сданные
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            setInfo("");
+            setError("");
+            void refreshList().then(() => setInfo("Список обновлён"));
+          }}
+          title="Обновить список с сервера"
+        >
+          <span className="ico">↻</span>
+          Обновить
+        </button>
+        <button
+          type="button"
+          className={showMyTickets ? "active" : ""}
+          onClick={() => setShowMyTickets((v) => !v)}
+        >
+          <span className="ico">✉</span>
+          Обращения
         </button>
         <button type="button" onClick={onLogout}>
           <span className="ico">⎋</span>

@@ -14,6 +14,7 @@ from app.deps import require_roles
 from app.models import (
     Assignment,
     Delegation,
+    DomainEvent,
     Employee,
     Evaluation,
     EvaluationStatus,
@@ -29,15 +30,24 @@ from app.schemas import (
     EmployeeCreateIn,
     FormalizeCandidateIn,
     ImportResult,
+    SecondAssignIn,
     TicketOut,
+    UserCreateIn,
+    UserPatchIn,
 )
-from app.services.evaluations import count_closed_assignments, repair_completed_urgents
+from app.security import hash_password
+from app.services.evaluations import (
+    count_closed_assignments,
+    covering_evaluator_ids,
+    repair_completed_urgents,
+)
 from app.services.events import emit_event
 from app.services.imports import (
     ensure_org_and_period,
     import_base,
     import_carnet,
     import_users,
+    nf,
     resolve_assignment_registry_path,
 )
 
@@ -56,6 +66,12 @@ class AssignPrimaryIn(BaseModel):
     evaluate: bool | None = None
     dual_enabled: bool | None = None
     secondary_user_id: int | None = None
+
+
+class BulkAssignmentsIn(BaseModel):
+    assignment_ids: list[int] = Field(min_length=1)
+    primary_user_id: int | None = None
+    evaluate: bool | None = None
 
 
 class TicketPatchIn(BaseModel):
@@ -91,10 +107,12 @@ def _escalation_count(db: Session, org_id: int, period_id: int) -> int:
         )
         submitted = (
             db.query(Evaluation)
+            .join(Assignment, Assignment.id == Evaluation.assignment_id)
             .filter(
                 Evaluation.evaluator_id == uid,
                 Evaluation.status == EvaluationStatus.submitted,
                 Evaluation.assignment_id.is_not(None),
+                Assignment.period_id == period_id,
             )
             .count()
         )
@@ -256,9 +274,11 @@ def list_assignments(
             "is_candidate": e.is_candidate,
             "site_code": a.site_code,
             "site_name": a.site_name,
+            "position_fact": a.position_fact,
             "evaluate": a.evaluate,
             "primary_fio": p.fio if p else None,
             "primary_tab": p.tab_no if p else None,
+            "primary_role": p.role.value if p else None,
             "primary_user_id": a.primary_user_id,
             "dual_enabled": a.dual_enabled,
             "secondary_user_id": a.secondary_user_id,
@@ -267,6 +287,83 @@ def list_assignments(
         }
         for a, e, p in rows
     ]
+
+
+@router.post("/assignments/bulk")
+@router.post("/assignment-bulk")
+def bulk_assignments(
+    body: BulkAssignmentsIn,
+    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
+    db: Session = Depends(get_db),
+):
+    """Массово: закрепить за прорабом/мастером и/или отправить/отозвать с оценки."""
+    if body.primary_user_id is None and body.evaluate is None:
+        raise HTTPException(status_code=400, detail="Укажите primary_user_id и/или evaluate")
+
+    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+
+    primary: User | None = None
+    if body.primary_user_id is not None:
+        primary = db.get(User, body.primary_user_id)
+        if (
+            not primary
+            or primary.organization_id != user.organization_id
+            or primary.role not in (UserRole.master, UserRole.foreman)
+        ):
+            raise HTTPException(status_code=400, detail="Нужен мастер или прораб этой организации")
+        if primary.status != "Активен":
+            raise HTTPException(status_code=400, detail="Оценщик отключён")
+
+    updated = 0
+    errors: list[str] = []
+
+    for aid in body.assignment_ids:
+        asg = db.get(Assignment, aid)
+        if (
+            not asg
+            or asg.organization_id != user.organization_id
+            or asg.period_id != period.id
+        ):
+            errors.append(f"id={aid}: не найден в текущем периоде")
+            continue
+        if body.primary_user_id is not None:
+            asg.primary_user_id = body.primary_user_id
+        if body.evaluate is not None:
+            if body.evaluate and not asg.primary_user_id:
+                errors.append(f"id={aid}: нельзя отправить без закреплённого оценщика")
+                continue
+            asg.evaluate = bool(body.evaluate)
+        if asg.evaluate and not asg.primary_user_id:
+            errors.append(f"id={aid}: evaluate без primary")
+            continue
+        asg.version = (asg.version or 1) + 1
+        updated += 1
+
+    if updated:
+        emit_event(
+            db,
+            organization_id=user.organization_id,
+            actor_user_id=user.id,
+            entity_type="assignment",
+            entity_id=None,
+            action="bulk_updated",
+            payload={
+                "count": updated,
+                "primary_user_id": body.primary_user_id,
+                "evaluate": body.evaluate,
+                "assignment_ids": body.assignment_ids[:50],
+            },
+        )
+        db.commit()
+    else:
+        db.rollback()
+
+    return {
+        "ok": True,
+        "updated": updated,
+        "errors": errors[:30],
+        "primary_fio": primary.fio if primary else None,
+    }
 
 
 @router.patch("/assignments/{assignment_id}")
@@ -308,6 +405,170 @@ def patch_assignment(
     return {"ok": True, "version": asg.version}
 
 
+@router.get("/second-evaluation")
+def second_evaluation(
+    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
+    db: Session = Depends(get_db),
+):
+    """Сотрудники периода со статусами 1-го и 2-го оценщика (вкладка «Вторая оценка»)."""
+    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    rows = (
+        db.query(Assignment, Employee)
+        .join(Employee, Employee.id == Assignment.employee_id)
+        .filter(Assignment.period_id == period.id)
+        .order_by(Employee.fio)
+        .all()
+    )
+    primary_ids = {a.primary_user_id for a, _e in rows if a.primary_user_id}
+    secondary_ids = {a.secondary_user_id for a, _e in rows if a.secondary_user_id}
+    user_ids = primary_ids | secondary_ids
+    names = {
+        u.id: u.fio
+        for u in db.query(User).filter(User.id.in_(user_ids)).all()
+    } if user_ids else {}
+
+    # Статусы анкет по всем закреплениям периода (с учётом заместителей)
+    evals = (
+        db.query(Evaluation)
+        .join(Assignment, Assignment.id == Evaluation.assignment_id)
+        .filter(Assignment.period_id == period.id)
+        .all()
+    )
+    eval_by_asg: dict[int, list[Evaluation]] = {}
+    for ev in evals:
+        eval_by_asg.setdefault(ev.assignment_id, []).append(ev)
+
+    def _status_for(assignment: Assignment, original_uid: int | None) -> str:
+        if not original_uid:
+            return "none"
+        cover = covering_evaluator_ids(
+            db,
+            organization_id=user.organization_id,
+            period_id=period.id,
+            original_user_id=original_uid,
+        )
+        best: EvaluationStatus | None = None
+        for ev in eval_by_asg.get(assignment.id, []):
+            if ev.evaluator_id not in cover:
+                continue
+            if ev.status == EvaluationStatus.submitted:
+                return "submitted"
+            if ev.status == EvaluationStatus.draft:
+                best = EvaluationStatus.draft
+        if best == EvaluationStatus.draft:
+            return "draft"
+        return "none"
+
+    return [
+        {
+            "assignment_id": a.id,
+            "employee_id": e.id,
+            "tab_no": e.tab_no,
+            "fio": e.fio,
+            "is_candidate": e.is_candidate,
+            "site_code": a.site_code,
+            "site_name": a.site_name,
+            "evaluate": a.evaluate,
+            "primary_user_id": a.primary_user_id,
+            "primary_fio": names.get(a.primary_user_id),
+            "primary_eval_status": _status_for(a, a.primary_user_id),
+            "dual_enabled": a.dual_enabled,
+            "secondary_user_id": a.secondary_user_id,
+            "secondary_fio": names.get(a.secondary_user_id),
+            "secondary_eval_status": _status_for(a, a.secondary_user_id),
+            "version": a.version,
+        }
+        for a, e in rows
+    ]
+
+
+@router.post("/second-evaluation/assign")
+def assign_secondary(
+    body: SecondAssignIn,
+    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
+    db: Session = Depends(get_db),
+):
+    """Назначить 2-го оценщика (только начальник участка, только своего участка) или снять его."""
+    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+
+    chief: User | None = None
+    if body.secondary_user_id is not None:
+        chief = db.get(User, body.secondary_user_id)
+        if not chief or chief.organization_id != user.organization_id:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        if chief.role != UserRole.site_chief:
+            raise HTTPException(
+                status_code=400,
+                detail="2-м оценщиком может быть только начальник участка",
+            )
+        if chief.status != "Активен":
+            raise HTTPException(status_code=400, detail="Начальник участка отключён")
+        if not chief.site_name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"У {chief.fio} не указан участок — заполните в «Настройках»",
+            )
+
+    updated = 0
+    errors: list[str] = []
+    for aid in body.assignment_ids:
+        asg = db.get(Assignment, aid)
+        if not asg or asg.organization_id != user.organization_id or asg.period_id != period.id:
+            errors.append(f"id={aid}: закрепление не найдено")
+            continue
+        emp = db.get(Employee, asg.employee_id)
+        label = emp.fio if emp else f"id={aid}"
+        if chief is not None:
+            if not asg.evaluate:
+                errors.append(f"{label}: сотрудник не на оценке (evaluate=нет)")
+                continue
+            if not asg.primary_user_id:
+                errors.append(f"{label}: сначала назначьте 1-го оценщика")
+                continue
+            if not asg.site_name or nf(asg.site_name) != nf(chief.site_name):
+                errors.append(
+                    f"{label}: участок «{asg.site_name or '—'}» ≠ участок начальника «{chief.site_name}»"
+                )
+                continue
+            if asg.primary_user_id == chief.id:
+                errors.append(f"{label}: 1-й и 2-й оценщик совпадают")
+                continue
+            asg.secondary_user_id = chief.id
+            asg.dual_enabled = True
+        else:
+            if not asg.secondary_user_id:
+                continue  # и так без 2-го — не считаем ошибкой
+            asg.secondary_user_id = None
+            asg.dual_enabled = False
+        asg.version = (asg.version or 1) + 1
+        updated += 1
+
+    if updated:
+        emit_event(
+            db,
+            organization_id=user.organization_id,
+            actor_user_id=user.id,
+            entity_type="assignment",
+            entity_id=None,
+            action="secondary_assigned" if chief else "secondary_removed",
+            payload={
+                "secondary_user_id": body.secondary_user_id,
+                "count": updated,
+                "assignment_ids": body.assignment_ids[:50],
+            },
+        )
+        db.commit()
+    else:
+        db.rollback()
+
+    return {
+        "ok": True,
+        "updated": updated,
+        "errors": errors[:30],
+        "secondary_fio": chief.fio if chief else None,
+    }
+
+
 @router.post("/urgent")
 def create_urgent(
     body: UrgentCreateIn,
@@ -319,6 +580,20 @@ def create_urgent(
         raise HTTPException(status_code=404, detail="Сотрудник не найден в Базе")
     if emp.is_candidate:
         raise HTTPException(status_code=400, detail="Сначала оформите кандидата в Базе (tab_no)")
+    existing_open = (
+        db.query(UrgentRequest)
+        .filter(
+            UrgentRequest.organization_id == user.organization_id,
+            UrgentRequest.employee_id == emp.id,
+            UrgentRequest.status == "open",
+        )
+        .first()
+    )
+    if existing_open:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Уже есть открытая срочная №{existing_open.id} на этого сотрудника — закройте её или дождитесь сдачи",
+        )
     ur = UrgentRequest(
         organization_id=user.organization_id,
         employee_id=emp.id,
@@ -328,7 +603,7 @@ def create_urgent(
     )
     db.add(ur)
     db.flush()
-    for uid in body.evaluator_user_ids:
+    for uid in dict.fromkeys(body.evaluator_user_ids):
         u = db.get(User, uid)
         if not u or u.role not in (UserRole.master, UserRole.foreman):
             raise HTTPException(status_code=400, detail=f"Недопустимый оценивающий id={uid}")
@@ -385,7 +660,12 @@ def list_urgent(
     )
     out = []
     for ur, emp in rows:
-        evals = db.query(UrgentEvaluator).filter(UrgentEvaluator.urgent_request_id == ur.id).all()
+        evals = (
+            db.query(UrgentEvaluator, User)
+            .outerjoin(User, User.id == UrgentEvaluator.user_id)
+            .filter(UrgentEvaluator.urgent_request_id == ur.id)
+            .all()
+        )
         out.append(
             {
                 "id": ur.id,
@@ -394,7 +674,15 @@ def list_urgent(
                 "employee_id": emp.id,
                 "tab_no": emp.tab_no,
                 "fio": emp.fio,
-                "evaluator_ids": [e.user_id for e in evals],
+                "evaluator_ids": [e.user_id for e, _u in evals],
+                "evaluator_names": [
+                    (
+                        f"{u.fio} ({'мастер' if (u.role == UserRole.master or str(u.role) == 'master') else 'прораб'})"
+                        if u
+                        else f"user#{e.user_id}"
+                    )
+                    for e, u in evals
+                ],
                 "created_at": ur.created_at,
             }
         )
@@ -412,6 +700,8 @@ def create_delegation(
     sub = db.get(User, body.substitute_user_id)
     if not orig or not sub:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
+    if orig.id == sub.id:
+        raise HTTPException(status_code=400, detail="Нельзя замещать самого себя")
     if sub.role not in (UserRole.master, UserRole.foreman):
         raise HTTPException(status_code=400, detail="Заместитель должен быть мастер/ПР")
     if body.ends_on < body.starts_on:
@@ -485,10 +775,13 @@ def deactivate_delegation(
 @router.get("/users")
 def list_users(
     role: UserRole | None = None,
+    all: bool = False,
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ):
-    q = db.query(User).filter(User.organization_id == user.organization_id, User.status == "Активен")
+    q = db.query(User).filter(User.organization_id == user.organization_id)
+    if not all:
+        q = q.filter(User.status == "Активен")
     if role:
         q = q.filter(User.role == role)
     return [
@@ -498,10 +791,122 @@ def list_users(
             "fio": u.fio,
             "role": u.role.value,
             "site_code": u.site_code,
+            "site_name": u.site_name,
+            "status": u.status,
             "last_login_at": u.last_login_at,
         }
         for u in q.order_by(User.fio).all()
     ]
+
+
+@router.patch("/users/{user_id}")
+def patch_user(
+    user_id: int,
+    body: UserPatchIn,
+    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
+    db: Session = Depends(get_db),
+):
+    """Правка пользователя из вкладки «Настройки»: роль, участок, статус, пароль."""
+    target = db.get(User, user_id)
+    if not target or target.organization_id != user.organization_id:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    data = body.model_dump(exclude_unset=True)
+    if target.id == user.id and (
+        ("role" in data and data["role"] != target.role)
+        or ("status" in data and data["status"] != target.status)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Нельзя менять собственную роль или статус — попросите другого администратора",
+        )
+
+    if "role" in data and data["role"] is not None:
+        if user.role == UserRole.admin_op and data["role"] == UserRole.admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Администрация ОП не может назначать роль системного админа",
+            )
+        target.role = data["role"]
+    if "site_code" in data:
+        target.site_code = (data["site_code"] or "").strip() or None
+    if "site_name" in data:
+        target.site_name = (data["site_name"] or "").strip() or None
+    if "status" in data and data["status"]:
+        target.status = data["status"].strip()
+    if "password" in data and data["password"]:
+        target.password_hash = hash_password(data["password"].strip())
+
+    emit_event(
+        db,
+        organization_id=user.organization_id,
+        actor_user_id=user.id,
+        entity_type="user",
+        entity_id=target.id,
+        action="updated",
+        payload={k: ("***" if k == "password" else v) for k, v in data.items()},
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "user": {
+            "id": target.id,
+            "tab_no": target.tab_no,
+            "fio": target.fio,
+            "role": target.role.value,
+            "site_code": target.site_code,
+            "site_name": target.site_name,
+            "status": target.status,
+        },
+    }
+
+
+@router.post("/users")
+def create_user(
+    body: UserCreateIn,
+    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
+    db: Session = Depends(get_db),
+):
+    """Создать пользователя вручную (кнопка «Создать сотрудника» в «Настройках»)."""
+    tab_no = body.tab_no.strip()
+    fio = body.fio.strip()
+    if not tab_no or not fio:
+        raise HTTPException(status_code=400, detail="Укажите табельный номер и ФИО")
+    exists = (
+        db.query(User)
+        .filter(User.organization_id == user.organization_id, User.tab_no == tab_no)
+        .first()
+    )
+    if exists:
+        raise HTTPException(status_code=400, detail=f"Табельный {tab_no} уже занят ({exists.fio})")
+    if user.role == UserRole.admin_op and body.role == UserRole.admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Администрация ОП не может создавать системного админа",
+        )
+    target = User(
+        organization_id=user.organization_id,
+        tab_no=tab_no,
+        fio=fio,
+        role=body.role,
+        site_code=(body.site_code or "").strip() or None,
+        site_name=(body.site_name or "").strip() or None,
+        status=body.status.strip() or "Активен",
+        password_hash=hash_password(body.password.strip()),
+    )
+    db.add(target)
+    db.flush()
+    emit_event(
+        db,
+        organization_id=user.organization_id,
+        actor_user_id=user.id,
+        entity_type="user",
+        entity_id=target.id,
+        action="created",
+        payload={"tab_no": tab_no, "role": body.role.value},
+    )
+    db.commit()
+    return {"ok": True, "user_id": target.id}
 
 
 @router.get("/employees")
@@ -695,8 +1100,6 @@ def list_events(
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ):
-    from app.models import DomainEvent
-
     q = db.query(DomainEvent).filter(DomainEvent.organization_id == user.organization_id)
     if entity_type:
         q = q.filter(DomainEvent.entity_type == entity_type)
@@ -748,10 +1151,12 @@ def list_escalations(
         )
         submitted = (
             db.query(Evaluation)
+            .join(Assignment, Assignment.id == Evaluation.assignment_id)
             .filter(
                 Evaluation.evaluator_id == uid,
                 Evaluation.status == EvaluationStatus.submitted,
                 Evaluation.assignment_id.is_not(None),
+                Assignment.period_id == period.id,
             )
             .count()
         )

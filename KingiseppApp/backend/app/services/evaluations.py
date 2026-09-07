@@ -9,13 +9,14 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import (
     Assignment,
+    Delegation,
     Evaluation,
     EvaluationStatus,
     UrgentEvaluator,
     UrgentRequest,
 )
 from app.services.events import emit_event
-from app.services.imports import ensure_org_and_period
+from app.services.imports import ensure_org_and_period, nf
 
 settings = get_settings()
 
@@ -33,6 +34,49 @@ def avg_scores(ev: Evaluation | None) -> float | None:
     if any(s is None for s in scores):
         return None
     return round(sum(scores) / 5, 2)  # type: ignore[arg-type]
+
+
+def covering_evaluator_ids(
+    db: Session,
+    *,
+    organization_id: int,
+    period_id: int,
+    original_user_id: int | None,
+) -> set[int]:
+    """Оригинальный оценщик + все, кто замещал его в периоде (в т.ч. уже завершившие)."""
+    if not original_user_id:
+        return set()
+    ids: set[int] = {original_user_id}
+    for d in (
+        db.query(Delegation)
+        .filter(
+            Delegation.organization_id == organization_id,
+            Delegation.period_id == period_id,
+            Delegation.original_user_id == original_user_id,
+        )
+        .all()
+    ):
+        ids.add(d.substitute_user_id)
+    return ids
+
+
+def site_matches(user_site: str | None, assignment_site: str | None) -> bool:
+    """Сравнение участков (нормализация как в импорте)."""
+    us = nf(user_site)
+    if not us:
+        return False
+    return us == nf(assignment_site)
+
+
+def filter_assignments_for_chief(assignments: list, user) -> list:
+    """Для начальника участка — только его site_name; без участка — пусто."""
+    from app.models import UserRole
+
+    if getattr(user, "role", None) != UserRole.site_chief:
+        return assignments
+    if not nf(getattr(user, "site_name", None)):
+        return []
+    return [a for a in assignments if site_matches(user.site_name, a.site_name)]
 
 
 def link_evaluation_to_period_assignment(db: Session, ev: Evaluation) -> Assignment | None:
@@ -124,44 +168,58 @@ def find_submitted_for_assignment(
     )
 
 
+def _latest_submitted(
+    db: Session, assignment_id: int, evaluator_ids: set[int]
+) -> Evaluation | None:
+    if not evaluator_ids:
+        return None
+    return (
+        db.query(Evaluation)
+        .filter(
+            Evaluation.assignment_id == assignment_id,
+            Evaluation.evaluator_id.in_(evaluator_ids),
+            Evaluation.status == EvaluationStatus.submitted,
+        )
+        .order_by(Evaluation.id.desc())
+        .first()
+    )
+
+
 def assignment_registry_status(
     db: Session, asg: Assignment
 ) -> tuple[Evaluation | None, Evaluation | None, float | None, float | None, str]:
-    """Вернуть (primary_ev, secondary_ev, p_avg, s_avg, status) как в реестре."""
-    primary_ev = None
-    if asg.primary_user_id:
-        primary_ev = (
-            db.query(Evaluation)
-            .filter(
-                Evaluation.assignment_id == asg.id,
-                Evaluation.evaluator_id == asg.primary_user_id,
-                Evaluation.status == EvaluationStatus.submitted,
-            )
-            .order_by(Evaluation.id.desc())
-            .first()
+    """Вернуть (primary_ev, secondary_ev, p_avg, s_avg, status) как в реестре.
+
+    Учитывает заместителей: анкета от substitute_user_id засчитывается за
+    original (1-го или 2-го оценщика).
+    """
+    primary_ids = covering_evaluator_ids(
+        db,
+        organization_id=asg.organization_id,
+        period_id=asg.period_id,
+        original_user_id=asg.primary_user_id,
+    )
+    secondary_ids: set[int] = set()
+    if asg.dual_enabled and asg.secondary_user_id:
+        secondary_ids = covering_evaluator_ids(
+            db,
+            organization_id=asg.organization_id,
+            period_id=asg.period_id,
+            original_user_id=asg.secondary_user_id,
         )
+
+    primary_ev = _latest_submitted(db, asg.id, primary_ids)
     if not primary_ev:
-        # срочная / замещение: любая отправленная анкета по этому назначению
+        # срочная / иной оценщик: любая сданная, кроме роли 2-го
         q = db.query(Evaluation).filter(
             Evaluation.assignment_id == asg.id,
             Evaluation.status == EvaluationStatus.submitted,
         )
-        if asg.dual_enabled and asg.secondary_user_id:
-            q = q.filter(Evaluation.evaluator_id != asg.secondary_user_id)
+        if secondary_ids:
+            q = q.filter(~Evaluation.evaluator_id.in_(secondary_ids))
         primary_ev = q.order_by(Evaluation.id.desc()).first()
 
-    secondary_ev = None
-    if asg.dual_enabled and asg.secondary_user_id:
-        secondary_ev = (
-            db.query(Evaluation)
-            .filter(
-                Evaluation.assignment_id == asg.id,
-                Evaluation.evaluator_id == asg.secondary_user_id,
-                Evaluation.status == EvaluationStatus.submitted,
-            )
-            .order_by(Evaluation.id.desc())
-            .first()
-        )
+    secondary_ev = _latest_submitted(db, asg.id, secondary_ids)
 
     p_avg = avg_scores(primary_ev)
     s_avg = avg_scores(secondary_ev)

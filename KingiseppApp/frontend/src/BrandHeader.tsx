@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 
-/** Шапка: логотип ВелесстройМонтаж фоном, растянут вправо */
+/** Шапка = фирменный баннер Велесстрой Монтаж + опциональная строка-подзаголовок */
 export function BrandHeader({
-  title = "Отдел мобилизации и координации ОП Кингисепп",
+  title,
   subtitle,
   right,
 }: {
@@ -11,18 +11,21 @@ export function BrandHeader({
   right?: ReactNode;
 }) {
   return (
-    <header className="corp-header corp-header-banner">
-      <div className="corp-banner-bg" aria-hidden>
-        <img src="./logo-velesstroy.png" alt="" />
+    <header className="brand-strip" aria-label="Велесстрой Монтаж · ОП Кингисепп">
+      <div className="brand-strip-banner">
+        <img
+          className="brand-strip-img"
+          src="./brand/header-banner.png"
+          alt="Велесстрой Монтаж — ОП Кингисепп · система оценки персонала"
+        />
+        {right && <div className="brand-strip-actions">{right}</div>}
       </div>
-      <div className="corp-header-inner">
-        <div className="corp-titles">
-          <p className="brand">ВелесстройМонтаж · Кингисепп</p>
-          <h1>{title}</h1>
-          {subtitle && <p className="muted">{subtitle}</p>}
+      {(title || subtitle) && (
+        <div className="brand-strip-info">
+          {title && <strong className="brand-strip-title">{title}</strong>}
+          {subtitle && <span className="brand-strip-sub">{subtitle}</span>}
         </div>
-        {right && <div className="corp-actions">{right}</div>}
-      </div>
+      )}
     </header>
   );
 }

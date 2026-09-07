@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { BrandHeader } from "./BrandHeader";
-import { apiRegistryRows, apiUpsertKvyr, type RegistryRow, type SessionUser } from "./api";
+import {
+  apiDownload,
+  apiQuestionnaire,
+  apiRegistryRows,
+  apiUpsertKvyr,
+  type Questionnaire,
+  type RegistryRow,
+  type SessionUser,
+} from "./api";
 
 type Props = {
   user: SessionUser;
@@ -19,8 +27,39 @@ export function RegistryApp({ user, onLogout, onBack }: Props) {
   const [info, setInfo] = useState("");
   const [coeff, setCoeff] = useState("1.0");
   const [selectedEmp, setSelectedEmp] = useState<number | null>(null);
+  const [quest, setQuest] = useState<Questionnaire | null>(null);
+  const [questLoading, setQuestLoading] = useState(false);
+  const [exporting, setExporting] = useState<"" | "xlsx" | "pdf">("");
   const isChief = user.role === "site_chief";
   const canEditKvyr = isChief || user.role === "admin" || user.role === "admin_op";
+
+  async function openQuestionnaire(assignmentId: number) {
+    setQuestLoading(true);
+    setError("");
+    try {
+      setQuest(await apiQuestionnaire(assignmentId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось открыть анкету");
+    } finally {
+      setQuestLoading(false);
+    }
+  }
+
+  async function runExport(kind: "xlsx" | "pdf") {
+    setExporting(kind);
+    setError("");
+    try {
+      if (kind === "xlsx") {
+        await apiDownload("/api/registry/export.xlsx", "reestr_ocenok.xlsx");
+      } else {
+        await apiDownload("/api/registry/export-questionnaires.pdf", "ankety.pdf");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось выгрузить файл");
+    } finally {
+      setExporting("");
+    }
+  }
 
   async function load() {
     try {
@@ -186,6 +225,12 @@ export function RegistryApp({ user, onLogout, onBack }: Props) {
         </label>
         <span className="pill info">Фильтр: {filterLabel}</span>
         <span className="muted">Строк: {filtered.length}</span>
+        <button type="button" className="ghost" disabled={exporting !== ""} onClick={() => runExport("xlsx")}>
+          {exporting === "xlsx" ? "Выгружаю…" : "⬇ Выгрузить реестр"}
+        </button>
+        <button type="button" className="ghost" disabled={exporting !== ""} onClick={() => runExport("pdf")}>
+          {exporting === "pdf" ? "Выгружаю…" : "⬇ Выгрузить анкеты (PDF)"}
+        </button>
       </div>
       {error && <p className="error">{error}</p>}
       {info && <p className="ok-text">{info}</p>}
@@ -239,7 +284,19 @@ export function RegistryApp({ user, onLogout, onBack }: Props) {
                 onClick={() => r.employee_id && setSelectedEmp(r.employee_id)}
               >
                 <td className="sticky-col">{r.tab_no}</td>
-                <td className="sticky-col-2">{r.fio}</td>
+                <td className="sticky-col-2">
+                  <button
+                    type="button"
+                    className="link fio-link"
+                    title="Открыть объединённую анкету (оба оценщика)"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (r.assignment_id) void openQuestionnaire(r.assignment_id);
+                    }}
+                  >
+                    {r.fio}
+                  </button>
+                </td>
                 <td>{r.primary_fio || "—"}</td>
                 <td>{r.primary_avg ?? "—"}</td>
                 <td>
@@ -260,8 +317,115 @@ export function RegistryApp({ user, onLogout, onBack }: Props) {
       </div>
       <p className="muted">
         Карточка сверху — фильтр по статусу. Список «Мастер / прораб» — по основному оценщику. Жёлтая строка —
-        тариф ≥6 мес. Клик по строке — ввод Квыр, «Отмена» снимает выбор.
+        тариф ≥6 мес. Клик по строке — ввод Квыр, «Отмена» снимает выбор. Клик по ФИО — объединённая анкета.
       </p>
+
+      {questLoading && <p className="muted">Открываю анкету…</p>}
+
+      {quest && (
+        <div className="modal-overlay" onClick={() => setQuest(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <h2 style={{ margin: 0 }}>Объединённая анкета · {quest.period_code}</h2>
+                <p className="muted" style={{ margin: 0 }}>
+                  <strong>{quest.employee.fio}</strong> · таб. {quest.employee.tab_no} ·{" "}
+                  {quest.employee.position || "—"} · {quest.employee.site_name || "—"}
+                </p>
+                {quest.employee.hourly_rate != null && (
+                  <p className="muted" style={{ margin: 0 }}>
+                    ЧТС: {quest.employee.hourly_rate} ₽/ч
+                    {quest.employee.rate_updated_at ? ` · изм. ${quest.employee.rate_updated_at}` : ""}
+                  </p>
+                )}
+              </div>
+              <button type="button" className="ghost" onClick={() => setQuest(null)}>
+                ✕ Закрыть
+              </button>
+            </div>
+
+            <div className="excel-wrap" style={{ maxHeight: "50vh" }}>
+              <table className="excel-table">
+                <thead>
+                  <tr>
+                    <th>Параметр</th>
+                    <th>
+                      1-й оценщик
+                      {quest.primary?.fio ? (
+                        <>
+                          <br />
+                          <span className="muted">{quest.primary.fio}</span>
+                        </>
+                      ) : null}
+                    </th>
+                    <th>
+                      2-й оценщик
+                      {quest.secondary?.fio ? (
+                        <>
+                          <br />
+                          <span className="muted">{quest.secondary.fio}</span>
+                        </>
+                      ) : null}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quest.criteria.map((c) => (
+                    <tr key={c.key}>
+                      <td>{c.title}</td>
+                      <td style={{ textAlign: "center" }}>{quest.primary?.scores[c.key] ?? "—"}</td>
+                      <td style={{ textAlign: "center" }}>{quest.secondary?.scores[c.key] ?? "—"}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td>
+                      <strong>Средний балл</strong>
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      <strong>{quest.primary?.avg ?? "—"}</strong>
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      <strong>{quest.secondary?.avg ?? "—"}</strong>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="quest-summary">
+              <span>
+                Общая оценка: <strong>{quest.combined_avg ?? "—"}</strong>
+              </span>
+              <span>
+                Квыр: <strong>{quest.k_vyr}</strong>
+              </span>
+              <span>
+                Итог: <strong>{quest.final_score ?? "—"}</strong>
+              </span>
+              <span className={`pill ${quest.status === "закрыто" ? "ok" : "warn"}`}>{quest.status}</span>
+            </div>
+
+            <div className="quest-evaluators muted">
+              <div>
+                1-й: {quest.primary?.fio || "—"}
+                {quest.primary?.role_ru ? ` (${quest.primary.role_ru})` : ""} ·{" "}
+                {quest.primary?.submitted_at
+                  ? `сдана ${new Date(quest.primary.submitted_at).toLocaleDateString("ru-RU")}`
+                  : "не сдана"}
+              </div>
+              <div>
+                2-й: {quest.secondary?.fio || "—"}
+                {quest.secondary?.role_ru ? ` (${quest.secondary.role_ru})` : ""} ·{" "}
+                {quest.secondary?.submitted_at
+                  ? `сдана ${new Date(quest.secondary.submitted_at).toLocaleDateString("ru-RU")}`
+                  : "не сдана"}
+              </div>
+              {quest.primary?.comment && <div>Комментарий 1-го: {quest.primary.comment}</div>}
+              {quest.secondary?.comment && <div>Комментарий 2-го: {quest.secondary.comment}</div>}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

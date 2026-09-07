@@ -12,6 +12,8 @@ class TokenOut(BaseModel):
     fio: str
     tab_no: str
     organization_id: int
+    site_code: str | None = None
+    site_name: str | None = None
 
 
 class LoginIn(BaseModel):
@@ -49,6 +51,11 @@ class AssignmentListItem(BaseModel):
     assignment_version: int
     is_urgent: bool = False
     urgent_request_id: int | None = None
+    # ЧТС и сводная оценка (для ЛК начальника участка)
+    hourly_rate: float | None = None
+    rate_updated_at: date | None = None
+    combined_score: float | None = None  # общая (1-й + 2-й), когда обе анкеты сданы
+    peer_submitted: bool = False  # второй оценщик уже сдал
 
 
 class EvaluationScoresIn(BaseModel):
@@ -177,3 +184,32 @@ class KvyрIn(BaseModel):
     site_code: str | None = None
     coeff: float = Field(gt=0, le=3)
     comment: str | None = None
+
+
+class UserPatchIn(BaseModel):
+    """Правка пользователя из «Настроек»: роль, участок, статус, пароль."""
+
+    role: UserRole | None = None
+    site_code: str | None = None
+    site_name: str | None = None
+    status: str | None = Field(default=None, min_length=1, max_length=32)
+    password: str | None = Field(default=None, min_length=4, max_length=72)
+
+
+class UserCreateIn(BaseModel):
+    """Новый пользователь из «Настроек»."""
+
+    tab_no: str = Field(min_length=1, max_length=64)
+    fio: str = Field(min_length=1, max_length=255)
+    role: UserRole
+    site_code: str | None = None
+    site_name: str | None = None
+    status: str = Field(default="Активен", min_length=1, max_length=32)
+    password: str = Field(min_length=4, max_length=72)
+
+
+class SecondAssignIn(BaseModel):
+    """Назначение/снятие 2-го оценщика (начальника участка)."""
+
+    assignment_ids: list[int] = Field(min_length=1)
+    secondary_user_id: int | None = None  # None = снять 2-го оценщика
