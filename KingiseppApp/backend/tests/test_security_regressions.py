@@ -1,9 +1,10 @@
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from starlette.requests import Request
 from sqlalchemy.orm import object_session
 
-from app.models import GroupOfUsers, Territory, UserTerritoryMapping
+from app.models import GroupOfUsers, PasswordSetupCode, Territory, UserTerritoryMapping
 from app.rate_limit import _rate_limit_key
 from app.security import create_access_token
 
@@ -21,18 +22,67 @@ def test_groups_require_authentication(client):
 def test_setup_password_cannot_be_used_without_identity_proof(client, seed):
     response = client.post(
         "/api/auth/control/setup-password",
-        params={"user_id": seed["master"].id, "new_password": "Replacement123"},
+        json={"user_id": seed["master"].id, "code": "000000", "new_password": "Replacement123"},
     )
-    assert response.status_code == 401
+    assert response.status_code == 403
 
 
-def test_setup_password_rejects_another_account(client, seed):
+def test_control_login_accepts_json_contract(client, seed):
     response = client.post(
-        "/api/auth/control/setup-password",
-        params={"user_id": seed["master"].id, "new_password": "Replacement123"},
+        "/api/auth/control/login",
+        json={"tab_no": seed["master"].tab_no, "password": "Password123"},
+    )
+    assert response.status_code == 200
+    assert response.json()["access_token"]
+
+
+def test_setup_code_is_single_use_and_revokes_old_token(client, seed):
+    target = seed["master"]
+    old_headers = _auth(target)
+    issued = client.post(f"/api/admin/users/{target.id}/setup-code", headers=_auth(seed["admin_op"]))
+    assert issued.status_code == 200
+    code = issued.json()["setup_code"]
+    assert client.get("/api/field/me", headers=old_headers).status_code == 401
+
+    payload = {"user_id": target.id, "code": code, "new_password": "Replacement123"}
+    completed = client.post("/api/auth/control/setup-password", json=payload)
+    assert completed.status_code == 200
+    assert client.post("/api/auth/control/setup-password", json=payload).status_code == 403
+
+
+def test_setup_code_rejects_wrong_and_expired_codes(client, seed):
+    target = seed["foreman"]
+    issued = client.post(f"/api/admin/users/{target.id}/setup-code", headers=_auth(seed["admin_op"]))
+    assert issued.status_code == 200
+    assert client.post("/api/auth/control/setup-password", json={
+        "user_id": target.id, "code": "999999", "new_password": "Replacement123"
+    }).status_code == 403
+    db = object_session(target)
+    setup_code = db.query(PasswordSetupCode).filter_by(user_id=target.id).one()
+    assert setup_code.attempts == 1
+    setup_code.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+    db.commit()
+    assert client.post("/api/auth/control/setup-password", json={
+        "user_id": target.id, "code": issued.json()["setup_code"], "new_password": "Replacement123"
+    }).status_code == 403
+
+
+def test_admin_op_cannot_grant_privileged_role(client, seed):
+    response = client.patch(
+        f"/api/admin/users/{seed['master'].id}",
+        json={"role": "management_op"},
         headers=_auth(seed["admin_op"]),
     )
     assert response.status_code == 403
+
+
+def test_user_status_is_strictly_validated(client, seed):
+    response = client.patch(
+        f"/api/admin/users/{seed['master'].id}",
+        json={"status": "arbitrary"},
+        headers=_auth(seed["admin_op"]),
+    )
+    assert response.status_code == 422
 
 
 def test_groups_enforce_territory_scope(client, seed):

@@ -2,6 +2,7 @@ import { useEffect, useState, type RefObject } from "react";
 import type { AdminUser } from "../api";
 import { ExcelSheet, type ExcelColumn } from "../ExcelSheet";
 import { ROLE_LABELS, type NewUserDraft, type SettingsSub, type UserDraft } from "./common";
+import { apiUrl, getToken } from "../api/shared";
 
 function TariffGridUpload({
     busy,
@@ -418,8 +419,8 @@ function AdminImportsPanel({ busy, onUpload }: { busy: boolean; onUpload: () => 
     useEffect(() => {
         (async () => {
             try {
-                const token = localStorage.getItem("kingisepp_token");
-                const res = await fetch("/api/admin/import-log", {
+                const token = getToken();
+                const res = await fetch(apiUrl("/api/admin/import-log"), {
                     headers: { Authorization: `Bearer ${token || ""}` },
                 });
                 if (res.ok) setLog(await res.json());
@@ -436,8 +437,10 @@ function AdminImportsPanel({ busy, onUpload }: { busy: boolean; onUpload: () => 
             formData.append("block", block);
             if (slot) formData.append("slot", slot);
             formData.append("file", file);
-            const res = await fetch(`/api/admin/import/upload?block=${encodeURIComponent(block)}${slot ? `&slot=${encodeURIComponent(slot)}` : ""}`, {
+            const token = getToken();
+            const res = await fetch(apiUrl(`/api/admin/import/upload?block=${encodeURIComponent(block)}${slot ? `&slot=${encodeURIComponent(slot)}` : ""}`), {
                 method: "POST",
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
                 body: formData,
             });
             const data = await res.json();
@@ -624,7 +627,7 @@ function FiredPanel() {
         (async () => {
             try {
                 const url = search ? `/api/admin/fired?search=${encodeURIComponent(search)}` : "/api/admin/fired";
-                setFired(await (await fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem("kingisepp_token")}` } })).json());
+                setFired(await (await fetch(apiUrl(url), { headers: { Authorization: `Bearer ${getToken() || ""}` } })).json());
             } catch (e) { /* ignore */ }
         })();
     }, [search]);
@@ -641,9 +644,17 @@ function FiredPanel() {
             <button
                 type="button"
                 className="primary"
-                onClick={() => {
-                    const token = localStorage.getItem("kingisepp_token");
-                    window.open(`/api/admin/fired/export.xlsx?_token=${token}`, "_blank");
+                onClick={async () => {
+                    const response = await fetch(apiUrl("/api/admin/fired/export.xlsx"), {
+                        headers: { Authorization: `Bearer ${getToken() || ""}` },
+                    });
+                    if (!response.ok) return;
+                    const href = URL.createObjectURL(await response.blob());
+                    const anchor = document.createElement("a");
+                    anchor.href = href;
+                    anchor.download = "fired-employees.xlsx";
+                    anchor.click();
+                    URL.revokeObjectURL(href);
                 }}
             >
                 Выгрузить Excel

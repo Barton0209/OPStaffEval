@@ -89,6 +89,7 @@ export function LoginScreen({ onLogin }: { onLogin: (token: string, user: any) =
   const [selTerritory, setSelTerritory] = useState("");
   const [selRole, setSelRole] = useState("");
   const [selUser, setSelUser] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -125,10 +126,7 @@ export function LoginScreen({ onLogin }: { onLogin: (token: string, user: any) =
     try {
       const user = users.find((u) => u.id.toString() === selUser);
       const body: Record<string, unknown> = { tab_no: user?.tab_no || selUser };
-      if (user && user.has_password) {
-        // Если у пользователя есть пароль — запросим setup (UI обработает)
-        body.password = "";
-      }
+      body.password = password;
       const resp: LoginResponse = await apiPost("/api/auth/control/login", body);
       if (resp.requires_password_setup) {
         // Переход на страницу создания пароля
@@ -199,6 +197,18 @@ export function LoginScreen({ onLogin }: { onLogin: (token: string, user: any) =
                   <option key={u.id} value={u.id.toString()}>{u.fio} ({u.tab_no})</option>
                 ))}
               </select>
+            </label>
+
+            <label className="login-field">
+              <span>Пароль</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setError(""); }}
+                disabled={!selUser}
+                placeholder="При первом входе оставьте пустым"
+              />
             </label>
 
             {error && <p className="login-error">{error}</p>}

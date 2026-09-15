@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
-from app.models import EvaluationStatus, UserRole
+from app.models import EvaluationStatus, UserRole, UserStatus
 
 
 class TokenOut(BaseModel):
@@ -252,7 +252,7 @@ class UserPatchIn(BaseModel):
     role: UserRole | None = None
     site_code: str | None = None
     site_name: str | None = None
-    status: str | None = Field(default=None, min_length=1, max_length=32)
+    status: UserStatus | None = None
     password: str | None = Field(default=None, min_length=8, max_length=72)
 
 
@@ -264,7 +264,7 @@ class UserCreateIn(BaseModel):
     role: UserRole
     site_code: str | None = None
     site_name: str | None = None
-    status: str = Field(default="Активен", min_length=1, max_length=32)
+    status: UserStatus = UserStatus.active
     password: str = Field(min_length=8, max_length=72)
 
 
