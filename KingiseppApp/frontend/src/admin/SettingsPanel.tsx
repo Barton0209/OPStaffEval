@@ -2,6 +2,7 @@ import { useEffect, useState, type RefObject } from "react";
 import type { AdminUser } from "../api";
 import { ExcelSheet, type ExcelColumn } from "../ExcelSheet";
 import { ROLE_LABELS, type NewUserDraft, type SettingsSub, type UserDraft } from "./common";
+import { apiUrl, getToken } from "../api/shared";
 
 function TariffGridUpload({
     busy,
@@ -407,6 +408,8 @@ const REGISTRY_SLOTS = [
 ];
 
 function AdminImportsPanel({ busy, onUpload }: { busy: boolean; onUpload: () => void }) {
+    void onUpload;
+    const [uploading, setUploading] = useState(false);
     const [files, setFiles] = useState<Record<string, File | null>>({});
     const [registryFiles, setRegistryFiles] = useState<Record<string, File | null>>({});
     const [results, setResults] = useState<Record<string, any>>({});
@@ -416,8 +419,8 @@ function AdminImportsPanel({ busy, onUpload }: { busy: boolean; onUpload: () => 
     useEffect(() => {
         (async () => {
             try {
-                const token = localStorage.getItem("kingisepp_token");
-                const res = await fetch("/api/admin/import-log", {
+                const token = getToken();
+                const res = await fetch(apiUrl("/api/admin/import-log"), {
                     headers: { Authorization: `Bearer ${token || ""}` },
                 });
                 if (res.ok) setLog(await res.json());
@@ -428,14 +431,16 @@ function AdminImportsPanel({ busy, onUpload }: { busy: boolean; onUpload: () => 
     async function handleUpload(block: string, slot?: string) {
         const file = slot ? registryFiles[slot] : files[block];
         if (!file) return;
-        setBusy(true);
+        setUploading(true);
         try {
             const formData = new FormData();
             formData.append("block", block);
             if (slot) formData.append("slot", slot);
             formData.append("file", file);
-            const res = await fetch(`/api/admin/import/upload?block=${encodeURIComponent(block)}${slot ? `&slot=${encodeURIComponent(slot)}` : ""}`, {
+            const token = getToken();
+            const res = await fetch(apiUrl(`/api/admin/import/upload?block=${encodeURIComponent(block)}${slot ? `&slot=${encodeURIComponent(slot)}` : ""}`), {
                 method: "POST",
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
                 body: formData,
             });
             const data = await res.json();
@@ -455,8 +460,9 @@ function AdminImportsPanel({ busy, onUpload }: { busy: boolean; onUpload: () => 
         } catch (e) {
             alert(e instanceof Error ? e.message : "Ошибка загрузки");
         } finally {
-            setBusy(false);
+            setUploading(false);
         }
+    }
 
     return (
         <div className="panel">
@@ -480,7 +486,7 @@ function AdminImportsPanel({ busy, onUpload }: { busy: boolean; onUpload: () => 
                                 <button
                                     type="button"
                                     className="primary"
-                                    disabled={busy || !files[block.key]}
+                                    disabled={busy || uploading || !files[block.key]}
                                     onClick={() => handleUpload(block.key)}
                                     style={{ fontSize: 0.75, padding: "3px 10px" }}
                                 >
@@ -522,7 +528,7 @@ function AdminImportsPanel({ busy, onUpload }: { busy: boolean; onUpload: () => 
                                         <button
                                             type="button"
                                             className="primary"
-                                            disabled={busy || !hasFile}
+                                            disabled={busy || uploading || !hasFile}
                                             onClick={() => handleUpload("Реестры оценок", slot)}
                                             style={{ fontSize: 0.75, padding: "3px 10px" }}
                                         >
@@ -572,121 +578,6 @@ function AdminImportsPanel({ busy, onUpload }: { busy: boolean; onUpload: () => 
         </div>
     );
 }
-
-
-            <h3>Загрузка файлов с данными (Администрация)</h3>
-
-            {/* Блоки 1-3 */}
-            <div className="upload-grid">
-                {ADMIN_BLOCKS.map((block) => (
-                    <div key={block.key} className="upload-card">
-                        <strong>{block.name}</strong>
-                        <span className="muted" style={{ fontSize: 0.8 }}>{block.desc}</span>
-                        <input
-                            type="file"
-                            accept=".xlsx,.xls"
-                            onChange={(e) => setFiles((f) => ({ ...f, [block.key]: e.target.files?.[0] || null }))}
-                            style={{ marginTop: 8 }}
-                        />
-                        {files[block.key] && (
-                            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
-                                <span className="ok-text" style={{ fontSize: 0.8 }}>{files[block.key]!.name}</span>
-                                <button
-                                    type="button"
-                                    className="primary"
-                                    disabled={busy || !files[block.key]}
-                                    onClick={() => handleUpload(block.key)}
-                                    style={{ fontSize: 0.75, padding: "3px 10px" }}
-                                >
-                                    Загрузить
-                                </button>
-                            </div>
-                        )}
-                        {results[block.key] && (
-                            <div style={{ fontSize: 0.8, marginTop: 4 }}>
-                                ✅ +{results[block.key].added} обнов:{results[block.key].updated}
-                                {results[block.key].errors?.length > 0 && (
-                                    <span style={{ color: "#dc2626", marginLeft: 8 }}>⚠ Ошибок: {results[block.key].errors.length}</span>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                ))}
-            </div>
-
-            {/* Блок 4 — Реестры оценок */}
-            <div style={{ marginTop: 20 }}>
-                <h4 style={{ margin: "0 0 12px", color: "#2563eb" }}>📋 4. Реестры оценок (12 критериев × 2 оценщика)</h4>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
-                    {REGISTRY_SLOTS.map(({ label, slot }) => {
-                        const hasFile = !!registryFiles[slot];
-                        const result = results[slot];
-                        return (
-                            <div key={slot} className="upload-card" style={{ border: "1px solid #e0e7ff" }}>
-                                <strong style={{ color: "#2563eb" }}>{label}</strong>
-                                <input
-                                    type="file"
-                                    accept=".xlsx"
-                                    onChange={(e) => setRegistryFiles((f) => ({ ...f, [slot]: e.target.files?.[0] || null }))}
-                                    style={{ marginTop: 6 }}
-                                />
-                                {hasFile && (
-                                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
-                                        <span className="ok-text" style={{ fontSize: 0.75 }}>{registryFiles[slot]!.name}</span>
-                                        <button
-                                            type="button"
-                                            className="primary"
-                                            disabled={busy || !hasFile}
-                                            onClick={() => handleUpload("Реестры оценок", slot)}
-                                            style={{ fontSize: 0.75, padding: "3px 10px" }}
-                                        >
-                                            Загрузить
-                                        </button>
-                                    </div>
-                                )}
-                                {result && (
-                                    <div style={{ fontSize: 0.8, marginTop: 4 }}>
-                                        ✅ +{result.added} обнов:{result.updated}
-                                        {result.errors?.length > 0 && (
-                                            <span style={{ color: "#dc2626", marginLeft: 8 }}>⚠ {result.errors.length} ош.</span>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {/* Журнал импортов */}
-            {log.length > 0 && (
-                <div style={{ marginTop: 20 }}>
-                    <h4 style={{ margin: "0 0 8px" }}>📜 Журнал загрузок</h4>
-                    <div style={{ maxHeight: 200, overflowY: "auto" }}>
-                        {log.map((entry, i) => (
-                            <div key={i} style={{
-                                padding: "6px 10px",
-                                borderBottom: "1px solid #eee",
-                                fontSize: 0.8,
-                                background: entry.success ? "#f0fdf4" : "#fef2f2",
-                            }}>
-                                <strong>{entry.block_name}</strong>
-                                {entry.slot_name && <span style={{ color: "#666" }}> — {entry.slot_name}</span>}
-                                <span style={{ color: "#888", marginLeft: 8 }}>{entry.file_name}</span>
-                                <span style={{ color: "#888", marginLeft: 8 }}>{entry.uploaded_at}</span>
-                                <span style={{ marginLeft: 8 }}>✅ +{entry.added} обнов:{entry.updated}</span>
-                                {entry.errors_count > 0 && (
-                                    <span style={{ color: "#dc2626", marginLeft: 8 }}>⚠ {entry.errors_count} ош.</span>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-}
-
 function EconomistImportsPanel({ busy, onUploadTariffGrid }: { busy: boolean; onUploadTariffGrid: (f: File) => void }) {
     const [fileUd, setFileUd] = useState<File | null>(null);
     const [fileTariff, setFileTariff] = useState<File | null>(null);
@@ -736,7 +627,7 @@ function FiredPanel() {
         (async () => {
             try {
                 const url = search ? `/api/admin/fired?search=${encodeURIComponent(search)}` : "/api/admin/fired";
-                setFired(await (await fetch(url, { headers: { Authorization: `Bearer ${localStorage.getItem("kingisepp_token")}` } })).json());
+                setFired(await (await fetch(apiUrl(url), { headers: { Authorization: `Bearer ${getToken() || ""}` } })).json());
             } catch (e) { /* ignore */ }
         })();
     }, [search]);
@@ -753,9 +644,17 @@ function FiredPanel() {
             <button
                 type="button"
                 className="primary"
-                onClick={() => {
-                    const token = localStorage.getItem("kingisepp_token");
-                    window.open(`/api/admin/fired/export.xlsx?_token=${token}`, "_blank");
+                onClick={async () => {
+                    const response = await fetch(apiUrl("/api/admin/fired/export.xlsx"), {
+                        headers: { Authorization: `Bearer ${getToken() || ""}` },
+                    });
+                    if (!response.ok) return;
+                    const href = URL.createObjectURL(await response.blob());
+                    const anchor = document.createElement("a");
+                    anchor.href = href;
+                    anchor.download = "fired-employees.xlsx";
+                    anchor.click();
+                    URL.revokeObjectURL(href);
                 }}
             >
                 Выгрузить Excel

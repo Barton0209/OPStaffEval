@@ -1,4 +1,6 @@
 import secrets
+import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
@@ -11,6 +13,12 @@ from app.models import User, UserStatus
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
 settings = get_settings()
+
+
+def hash_password_setup_code(user_id: int, code: str) -> str:
+    """Keyed hash prevents recovery of short numeric codes from a database leak."""
+    message = f"{user_id}:{code}".encode()
+    return hmac.new(settings.secret_key.encode(), message, hashlib.sha256).hexdigest()
 
 
 def generate_temporary_password() -> str:

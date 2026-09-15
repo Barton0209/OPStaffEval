@@ -23,6 +23,7 @@ async function apiPost(url: string, body: Record<string, unknown>): Promise<any>
 
 export function PasswordSetupScreen({ user, onSuccess, onLogout }: Props) {
   const [pwd, setPwd] = useState("");
+  const [code, setCode] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,6 +37,7 @@ export function PasswordSetupScreen({ user, onSuccess, onLogout }: Props) {
     try {
       const resp: any = await apiPost("/api/auth/control/setup-password", {
         user_id: user.id,
+        code,
         new_password: pwd,
       });
       onSuccess(resp.access_token, resp.user);
@@ -54,6 +56,19 @@ export function PasswordSetupScreen({ user, onSuccess, onLogout }: Props) {
           Здравствуйте, {user.fio}! Установите пароль для входа в систему.
         </p>
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 0.35 }}>
+            <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#333" }}>Одноразовый код</span>
+            <input
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              minLength={6}
+              maxLength={6}
+              required
+              style={{ height: 44, border: "1.5px solid #d0d0d0", borderRadius: 8, padding: "0 0.75rem", fontSize: "0.95rem" }}
+            />
+          </label>
           <label style={{ display: "flex", flexDirection: "column", gap: 0.35 }}>
             <span style={{ fontSize: 0.82, fontWeight: 600, color: "#333" }}>Пароль</span>
             <input

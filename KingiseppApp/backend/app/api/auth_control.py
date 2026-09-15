@@ -1,11 +1,13 @@
 """API для каскадного входа «Контроль»: Territory → Role → Users → Login → Setup Password."""
 
 from datetime import datetime, timezone
+import hmac
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.db import get_db
@@ -13,6 +15,7 @@ from app.models import (
     Department,
     GroupOfUsers,
     Organization,
+    PasswordSetupCode,
     Territory,
     User,
     UserRole,
@@ -25,11 +28,19 @@ from app.security import (
     create_access_token,
     decode_token,
     hash_password,
+    hash_password_setup_code,
     verify_password,
 )
 
 router = APIRouter(prefix="/api/auth/control", tags=["auth_control"])
 settings = get_settings()
+
+
+class PasswordSetupIn(BaseModel):
+    user_id: int
+    code: str = Field(min_length=6, max_length=32)
+    new_password: str = Field(min_length=8, max_length=128)
+
 
 # Роли, доступные в каскаде
 CONTROL_ROLES = [
@@ -242,19 +253,38 @@ def control_login(
 @limiter.limit("3/minute")
 def setup_password(
     request: Request,
-    user_id: int,
-    new_password: str,
+    payload: PasswordSetupIn,
     db: Session = Depends(get_db),
 ):
-    """Установка пароля для первого входа."""
-    if len(new_password) < 8:
-        raise HTTPException(status_code=400, detail="Пароль должен содержать минимум 8 символов")
-    
-    user = db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-    
-    user.password_hash = hash_password(new_password)
+    """Consume an administrator-issued one-time code and set a new password."""
+    user = db.get(User, payload.user_id)
+    if not user or user.status != UserStatus.active or not user.must_change_password:
+        raise HTTPException(status_code=403, detail="Установка пароля недоступна")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    setup_code = (
+        db.query(PasswordSetupCode)
+        .filter(
+            PasswordSetupCode.user_id == user.id,
+            PasswordSetupCode.consumed_at.is_(None),
+        )
+        .order_by(PasswordSetupCode.id.desc())
+        .first()
+    )
+    supplied_hash = hash_password_setup_code(user.id, payload.code.strip())
+    if (
+        not setup_code
+        or setup_code.expires_at <= now
+        or setup_code.attempts >= setup_code.max_attempts
+        or not hmac.compare_digest(setup_code.code_hash, supplied_hash)
+    ):
+        if setup_code and setup_code.expires_at > now and setup_code.attempts < setup_code.max_attempts:
+            setup_code.attempts += 1
+            db.commit()
+        raise HTTPException(status_code=403, detail="Код недействителен или истёк")
+
+    setup_code.consumed_at = now
+    user.password_hash = hash_password(payload.new_password)
     user.must_change_password = False
     # F03 FIX: увеличиваем token_version
     user.token_version = (user.token_version or 0) + 1
