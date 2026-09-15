@@ -10,9 +10,9 @@ echo [2/3] Синхронизация Capacitor Android...
 call npx cap sync android
 if errorlevel 1 goto :err
 
-echo [3/3] Сборка debug APK...
+echo [3/3] Сборка release APK (minify + R8)...
 cd android
-call gradlew.bat assembleDebug
+call gradlew.bat assembleRelease
 if errorlevel 1 (
   echo.
   echo Gradle не собрал APK. Откройте проект в Android Studio:
@@ -24,9 +24,15 @@ if errorlevel 1 (
 echo.
 echo ============================================
 echo  APK готов:
-echo  frontend\android\app\build\outputs\apk\debug\app-debug.apk
+echo  frontend\android\app\build\outputs\apk\release\app-release.apk
 echo ============================================
-explorer "app\build\outputs\apk\debug"
+echo.
+echo  ВНИМАНИЕ: если keystore.properties не настроен, APK подписан
+echo  debug-ключом (только для теста). Для публикации в магазине:
+echo   1) copy frontend\android\keystore.properties.example frontend\android\keystore.properties
+echo   2) сгенерируйте release.keystore и заполните пароли в keystore.properties
+echo   3) перезапустите этот скрипт
+explorer "app\build\outputs\apk\release"
 pause
 exit /b 0
 

@@ -14,11 +14,17 @@ class TokenOut(BaseModel):
     organization_id: int
     site_code: str | None = None
     site_name: str | None = None
+    must_change_password: bool = False
 
 
 class LoginIn(BaseModel):
     tab_no: str
     password: str
+
+
+class ChangePasswordIn(BaseModel):
+    old_password: str = Field(min_length=1, max_length=72)
+    new_password: str = Field(min_length=8, max_length=72)
 
 
 class UserMe(BaseModel):
@@ -29,6 +35,7 @@ class UserMe(BaseModel):
     site_code: str | None
     site_name: str | None
     organization_id: int
+    must_change_password: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -54,6 +61,10 @@ class AssignmentListItem(BaseModel):
     # ЧТС и сводная оценка (для ЛК начальника участка)
     hourly_rate: float | None = None
     rate_updated_at: date | None = None
+    rate_last_raised: date | None = None  # дата последнего поднятия ЧТС
+    is_rate_expired: bool = False  # >= 180 дней без поднятия ЧТС
+    tariff_min: float | None = None  # мин по тарифной сетке (должность + гражданство)
+    tariff_max: float | None = None
     combined_score: float | None = None  # общая (1-й + 2-й), когда обе анкеты сданы
     peer_submitted: bool = False  # второй оценщик уже сдал
 
@@ -85,6 +96,7 @@ class EvaluationOut(BaseModel):
     submitted_at: datetime | None
     conflict: bool = False
     conflict_message: str | None = None
+    conflict_diff: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -121,20 +133,29 @@ class RegistryRow(BaseModel):
     primary_avg: float | None
     secondary_fio: str | None
     secondary_avg: float | None
+    combined_avg: float | None = None
     k_vyr: float | None
     final_score: float | None
     status: str
     is_urgent: bool = False
     hourly_rate: float | None = None
     rate_updated_at: date | None = None
+    rate_last_raised: date | None = None
     months_since_rate_update: int | None = None
     tariff_stale: bool = False
+    is_rate_expired: bool = False  # >= 180 дней без поднятия ЧТС (красная подсветка)
+    tariff_min: float | None = None
+    tariff_max: float | None = None
+    citizenship: str | None = None
     employee_id: int | None = None
     assignment_id: int | None = None
+    # Испытательный срок сотрудника.
+    probation_end_date: date | None = None
+    probation_active: bool = False
 
 
 class TicketIn(BaseModel):
-    message: str
+    message: str = Field(max_length=5000)
     assignment_id: int | None = None
     employee_id: int | None = None
 
@@ -172,6 +193,45 @@ class EmployeeCreateIn(BaseModel):
     is_candidate: bool = False
 
 
+class EmployeePatchIn(BaseModel):
+    """Правка сотрудника: ЧТС и дата последнего поднятия."""
+
+    hourly_rate: float | None = Field(default=None, ge=0, le=10_000_000)
+    rate_last_raised: date | None = None
+
+
+class EconomistRateUpdateIn(BaseModel):
+    """Изменение ЧТС сотрудника экономистом (с датой и комментарием)."""
+
+    tab_no: str = Field(min_length=1, max_length=64)
+    changed_at: date
+    new_rate: float = Field(gt=0, le=10_000_000)
+    comment: str | None = Field(default=None, max_length=500)
+
+
+class RateHistoryOut(BaseModel):
+    """Запись истории изменения ЧТС."""
+
+    id: int
+    employee_id: int
+    old_rate: float | None
+    new_rate: float
+    changed_at: date
+    comment: str | None
+    created_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class TariffGridOut(BaseModel):
+    """Строка тарифной сетки (должность + гражданство + мин/макс ЧТС)."""
+
+    position: str
+    citizenship: str
+    min_rate: float
+    max_rate: float
+
+
 class FormalizeCandidateIn(BaseModel):
     employee_id: int
     new_tab_no: str
@@ -179,7 +239,7 @@ class FormalizeCandidateIn(BaseModel):
     position_1c: str | None = None
 
 
-class KvyрIn(BaseModel):
+class KvyrIn(BaseModel):
     employee_id: int | None = None
     site_code: str | None = None
     coeff: float = Field(gt=0, le=3)
@@ -193,7 +253,7 @@ class UserPatchIn(BaseModel):
     site_code: str | None = None
     site_name: str | None = None
     status: str | None = Field(default=None, min_length=1, max_length=32)
-    password: str | None = Field(default=None, min_length=4, max_length=72)
+    password: str | None = Field(default=None, min_length=8, max_length=72)
 
 
 class UserCreateIn(BaseModel):
@@ -205,7 +265,7 @@ class UserCreateIn(BaseModel):
     site_code: str | None = None
     site_name: str | None = None
     status: str = Field(default="Активен", min_length=1, max_length=32)
-    password: str = Field(min_length=4, max_length=72)
+    password: str = Field(min_length=8, max_length=72)
 
 
 class SecondAssignIn(BaseModel):
@@ -213,3 +273,34 @@ class SecondAssignIn(BaseModel):
 
     assignment_ids: list[int] = Field(min_length=1)
     secondary_user_id: int | None = None  # None = снять 2-го оценщика
+
+
+# ==================== Group_of_Users ====================
+
+class GroupOfUsersCreate(BaseModel):
+    """Создание группы пользователей."""
+    territory_name: str = Field(min_length=1, max_length=255)
+    department_name: str | None = Field(default=None, max_length=255)
+    group_name: str = Field(min_length=1, max_length=128)
+    permission: str | None = Field(default=None, max_length=255)
+
+
+class GroupOfUsersUpdate(BaseModel):
+    """Обновление группы пользователей."""
+    territory_name: str | None = Field(default=None, max_length=255)
+    department_name: str | None = Field(default=None, max_length=255)
+    group_name: str | None = Field(default=None, max_length=128)
+    permission: str | None = Field(default=None, max_length=255)
+
+
+class GroupOfUsersOut(BaseModel):
+    """Вывод группы пользователей."""
+    id: int
+    territory_id: int | None
+    territory_name: str | None
+    department_id: int | None
+    department_name: str | None
+    group_name: str | None
+    permission: str | None
+
+    model_config = {"from_attributes": True}

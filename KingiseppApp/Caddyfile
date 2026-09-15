@@ -1,14 +1,33 @@
-# KingiseppApp — телефон в той же Wi‑Fi / LAN
-# Открывайте: http://<IP-ПК>:8080
-# (HTTPS с IP часто ломается на tls internal — для LAN достаточно HTTP)
+# KingiseppApp — LAN deployment (HTTPS recommended)
+# =================================================
+# Вариант 1: HTTP (только для изолированной LAN без Wi-Fi)
+# Вариант 2: HTTPS с self-signed cert (рекомендуется)
+#
+# Для HTTPS:
+#   1. Сгенерируйте self-signed cert:
+#      openssl req -x509 -newkey rsa:4096 -keyout caddy.key -out caddy.crt -days 365 -nodes
+#   2. Положите caddy.key и caddy.crt в корень проекта
+#   3. Раскомментируйте блок "tls" ниже
+# =================================================
 
 {
 	auto_https off
 }
 
+# --- Вариант 1: HTTP (без шифрования) ---
 :8080 {
 	reverse_proxy 127.0.0.1:8000 {
 		header_up Host {host}
 		header_up X-Real-IP {remote_host}
 	}
 }
+
+# --- Вариант 2: HTTPS (раскомментируйте для production) ---
+# :8443 {
+# 	tls /path/to/caddy.crt /path/to/caddy.key
+# 	strict_transport_security max-age=31536000; includeSubDomains
+# 	reverse_proxy 127.0.0.1:8000 {
+# 		header_up Host {host}
+# 		header_up X-Real-IP {remote_host}
+# 	}
+# }

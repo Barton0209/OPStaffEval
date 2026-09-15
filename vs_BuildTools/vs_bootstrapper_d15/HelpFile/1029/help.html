@@ -1,0 +1,490 @@
+﻿<!DOCTYPE HTML>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <style>
+        body {
+            padding-right: 0px;
+            padding-left: 0px;
+            font-size: 12pt;
+            background: #ffffff;
+            padding-bottom: 12pt;
+            margin: 0px;
+            color: #000000;
+            padding-top: 0px;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        .banner {
+            padding-right: 0px;
+            padding-left: 5px;
+            font-weight: bold;
+            font-size: 10pt;
+            padding-bottom: 6pt;
+            width: 100%;
+            padding-top: 6pt;
+            background-color: #68217A;
+            text-align: left;
+        }
+
+        .style1 {
+            font-family: Arial;
+        }
+
+        table, th, td {
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <div class="banner"><a name="top">Microsoft Visual Studio 2022</a></div>
+    <h1>Příkazový řádek Visual Studia</h1>
+    <h2>Použití: vs_enterprise.exe [příkaz [možnosti]]</h2>
+    <h3>(Nahraďte vs_enterprise.exe podle toho, kterou edici produktu instalujete.)</h3>
+    <div>
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Příkaz příkazového řádku</strong></th>
+                    <th><strong>Popis</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>(blank)</code></td>
+                    <td>
+                        Nainstaluje produkt.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>modify</code></td>
+                    <td>
+                        Upraví nainstalovaný produkt.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>update</code></td>
+                    <td>
+                        Aktualizuje nainstalovaný produkt.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>repair</code></td>
+                    <td>
+                        Opraví nainstalovaný produkt.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>resume</code></td>
+                    <td>
+                        Obnoví instalaci.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>export</code></td>
+                    <td>
+                        Exportuje konfigurační soubor instalace.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>modifySettings</code></td>
+                    <td>
+                        Upraví nastavení existující instalace.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>removeChannel</code></td>
+                    <td>
+                        Odebere kanál.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>updateAll</code></td>
+                    <td>
+                        Aktualizuje všechny příslušné instalace.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>uninstall</code></td>
+                    <td>
+                        Odinstaluje nainstalovaný produkt.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Možnost příkazového řádku instalace</strong></th>
+                    <th><strong>Popis</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--installPath &lt;dir&gt;</code></td>
+                    <td>Instalační adresář instance, na kterou se má reagovat.
+ Pro příkaz install je to volitelné a určuje místo, kde se instance nainstaluje.
+ U ostatních příkazů je to povinné a určuje místo, kde byla nainstalována dříve nainstalovaná instance.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--addProductLang &lt;národní prostředí jazyka&gt;</code></td>
+                    <td>Při instalaci nebo úpravě to určuje jazykové sady uživatelského rozhraní, které jsou nainstalovány do produktu.
+ Na příkazovém řádku se může zobrazit několikrát a přidat více jazykových sad. Pokud to není uvedeno, instalace použije národní prostředí počítače.
+ Úplný seznam podporovaných jazykových národních prostředí najdete níže.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--removeProductLang &lt;národní prostředí jazyka&gt;</code></td>
+                    <td>Při instalaci nebo úpravě to určuje jazykové sady uživatelského rozhraní, které se mají odebrat z produktu.
+ Na příkazovém řádku se může zobrazit několikrát a přidat více jazykových sad.
+ Úplný seznam podporovaných jazykových národních prostředí najdete níže.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--add &lt;jedno nebo více ID úloh nebo komponent&gt;</code></td>
+                    <td>Jedno nebo více ID úloh nebo komponent k přidání.
+ Nainstalují se požadované součásti artefaktu. ale ne doporučené nebo volitelné součásti.
+ Další komponenty můžete globálně řídit pomocí <code>--includeRecommended</code> a/nebo <code>--includeOptional</code>. 
+ Pokud chcete zahrnout více úloh nebo komponent, opakujte příkaz <code>--add</code> (například <code>--add Workload1 --add Workload2</code>).
+ Pro podrobnější řízení můžete k ID připojit <code>;includeRecommended</code> nebo <code>;includeOptional</code> 
+ (například <code>--add Workload1;includeRecommended</code> nebo <code>--add Workload2;includeRecommended;includeOptional</code>). 
+ Tuto možnost můžete podle potřeby opakovat.</td>
+                </tr>
+                <tr>
+                    <td><code>--remove &lt;jedno nebo více ID úloh nebo komponent&gt;</code></td>
+                    <td>Jedno nebo více ID úloh nebo komponent, které se mají odebrat.</td>
+                </tr>
+                <tr>
+                    <td><code>--in &lt;cesta&gt;</code></td>
+                    <td>Identifikátor URI nebo cesta k souboru odpovědí.</td>
+                </tr>
+                <tr>
+                    <td><code>--all</code></td>
+                    <td>Určuje, jestli se mají nainstalovat všechny úlohy a komponenty produktu.</td>
+                </tr>
+                <tr>
+                    <td><code>--allWorkloads</code></td>
+                    <td>Nainstaluje všechny úlohy a komponenty, ale žádné doporučené ani volitelné komponenty.</td>
+                </tr>
+                <tr>
+                    <td><code>--includeRecommended</code></td>
+                    <td>Zahrnuje doporučené komponenty pro všechny nainstalované úlohy, ale ne volitelné komponenty.
+ Úlohy se zadávají pomocí <code>--allWorkloads</code> nebo <code>--add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeOptional</code></td>
+                    <td>Zahrnuje volitelné komponenty pro všechny nainstalované úlohy, ale ne doporučené komponenty. 
+ Úlohy se zadávají pomocí <code>--allWorkloads</code> nebo <code>--add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--quiet, -q</code></td>
+                    <td>Při instalaci nezobrazovat žádné uživatelské rozhraní.</td>
+                </tr>
+                <tr>
+                    <td><code>--passive, -p</code></td>
+                    <td>Zobrazit uživatelské rozhraní, ale nepožadovat od uživatele žádnou interakci.</td>
+                </tr>
+                <tr>
+                    <td><code>--norestart</code></td>
+                    <td>Pokud je to uvedeno, příkazy s <code>--passive</code> nebo <code>--quiet</code> 
+ automaticky nerestartují počítač (pokud je to nutné). 
+ To se ignoruje, pokud není zadán parametr <code>--passive</code> ani <code>--quiet</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--nickname &lt;název&gt;</code></td>
+                    <td>Tím definujete přezdívku, kterou chcete přiřadit nainstalovanému produktu. 
+ Přezdívka nesmí být delší než 10 znaků.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--productKey &lt;klíč&gt;</code></td>
+                    <td>Definuje kód Product Key, který se má použít pro nainstalovaný produkt. 
+ Skládá se z 25 alfanumerických znaků ve formátu <code>xxxxx-xxxxx-xxxxx-xxxxx-xxxxx</code> nebo <code>xxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--config &lt;celácesta&gt;</code></td>
+                    <td>Během operace instalace nebo úpravy to určuje úlohy a komponenty, které se mají přidat 
+ na základě dříve uloženého konfiguračního souboru instalace. Tato operace je aditivní a neodebere žádnou úlohu ani komponentu, 
+ pokud se v souboru nenacházejí. Nebudou přidány ani položky, které se nevztahují k produktu. Během operace exportu 
+ to určuje umístění pro uložení konfiguračního souboru instalace.
+ Musí se jednat o absolutní cestu.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--help, --?, -h, -?</code></td>
+                    <td>Zobrazí použití parametru.</td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Možnost příkazového řádku rozložení</strong></th>
+                    <th><strong>Popis</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--layout &lt;dir&gt;</code></td>
+                    <td>Určuje adresář pro vytvoření mezipaměti offline instalace.</td>
+                </tr>
+                <tr>
+                    <td><code>--lang &lt;jedno nebo více národních prostředí jazyka&gt;</code></td>
+                    <td>Používá se s <code>--layout</code> k přípravě mezipaměti offline instalace s balíčky prostředků se zadanými jazyky. 
+ Úplný seznam podporovaných jazykových národních prostředí najdete níže.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--add &lt;jedno nebo více ID úloh nebo komponent&gt;</code></td>
+                    <td>Jedno nebo více ID úloh nebo komponent, které se mají přidat. Nainstalují se povinné součásti artefaktu, ale ne doporučené nebo volitelné komponenty. 
+ Další komponenty můžete globálně řídit pomocí <code>--includeRecommended</code> a/nebo <code>--includeOptional</code>. 
+ Pro podrobnější ovládání můžete k ID připojit <code>;includeRecommended</code> nebo <code>;includeOptional</code> 
+ (například <code>--add Workload1;includeRecommended</code> nebo <code>--add Workload2;includeOptional</code>). 
+ <br> Poznámka: Pokud se používá <code>--add</code>, stahují se jenom zadané úlohy a komponenty a jejich závislosti. 
+ Pokud se nezadá <code>--add</code>, stáhnou se do rozložení všechny úlohy a komponenty.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeRecommended</code></td>
+                    <td>Zahrnuje doporučené komponenty pro všechny nainstalované úlohy, ale ne volitelné komponenty. 
+ Úlohy se zadávají pomocí <code>--allWorkloads</code> nebo <code>--add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeOptional</code></td>
+                    <td>Zahrnuje doporučené <em>a</em> volitelné komponenty pro všechny úlohy zahrnuté v rozložení. 
+ Úlohy se zadávají pomocí <code>--add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--keepLayoutVersion</code></td>
+                    <td>Umožňuje použít změny rozložení bez aktualizace verze rozložení.</td>
+                </tr>
+                <tr>
+                    <td><code>--verify</code></td>
+                    <td>Slouží k ověření obsah rozložení. Zobrazí se všechny poškozené a chybějící soubory.</td>
+                </tr>
+                <tr>
+                    <td><code>--fix</code></td>
+                    <td>Ověřte obsah rozložení. 
+ Pokud zjistíte, že jsou některé soubory poškozené nebo chybí, stáhnou se znovu. 
+ K opravě rozložení se vyžaduje přístup k internetu.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--clean &lt;jedna nebo více cest ke katalogům&gt;</code></td>
+                    <td>Odebere staré verze komponent z rozložení, které bylo aktualizováno na novější verzi.</td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Pokročilá možnost příkazového řádku</strong></th>
+                    <th><strong>Popis</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--channelId &lt;id&gt;</code></td>
+                    <td>ID kanálu pro instanci, která se má nainstalovat 
+ To je vyžadováno pro příkaz install. Pokud je zadán parametr <code>--installPath</code>, bude to pro ostatní příkazy ignorováno.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--channelUri &lt;uri&gt;</code></td>
+                    <td>Identifikátor URI manifestu kanálu. Pokud aktualizace nejsou žádoucí, <code>--channelUri</code> může odkazovat na neexistující soubor. 
+ (například --channelUri C:\doesntExist.chman). Dá se použít pro příkaz install. U jiných příkazů se ignoruje.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--installChannelUri &lt;uri&gt;</code></td>
+                    <td>Identifikátor URI manifestu kanálu, který se má použít pro instalaci. Identifikátor URI určený parametrem <code>--channelUri</code> 
+ (který se musí zadat, když je zadán parametr <code>--installChannelUri</code>) se používá ke zjišťování aktualizací.
+ Dá se použít pro příkaz install. U jiných příkazů se ignoruje.
+                        </td>
+                </tr>
+                <tr>
+                    <td><code>--installCatalogUri &lt;identifikátor URI&gt;</code></td>
+                    <td>Identifikátor URI manifestu katalogu, který se má použít pro instalaci. 
+ Pokud je zadán, Správce kanálů se před použitím identifikátoru URI v manifestu instalačního kanálu pokusí stáhnout manifest katalogu z tohoto identifikátoru URI. 
+ Tento parametr se používá pro podporu offline instalace, kde se mezipaměť rozložení vytvoří s již staženým katalogem produktů. 
+ Dá se použít pro příkaz install. U jiných příkazů se ignoruje.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--productId &lt;id&gt;</code></td>
+                    <td>ID produktu pro instanci, která bude nainstalována. Tato možnost je při normálních instalačních podmínkách předem vyplněna.</td>
+                </tr>
+                <tr>
+                    <td><code>--newChannelUri &lt;identifikátor URI&gt;</code></td>
+                    <td>Nový identifikátor URI nebo cesta k manifestu kanálu, který se má použít pro aktualizace.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--layoutUri &lt;uri&gt;</code></td>
+                    <td>Identifikátor URI rozložení hostovaného na webu, který se používá k načtení instalačních balíčků.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--theme &lt;theme&gt;</code></td>
+                    <td>Změní barevný motiv instalačního programu. Hodnoty můžou být Light/Dark/HighContrast.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--wait</code></td>
+                    <td>Proces před vrácením ukončovacím kódu počká, dokud se instalace nedokončí. 
+ To je užitečné při automatizaci instalací, kdy je potřeba počkat na dokončení instalace, aby bylo možné zpracovat návratový kód z této instalace.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--locale &lt;národní prostředí jazyka&gt;</code></td>
+                    <td>Změňte jazyk zobrazení uživatelského rozhraní samotného instalačního programu. Nastavení bude trvalé. 
+ Úplný seznam podporovaných jazykových národních prostředí najdete níže.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--cache</code></td>
+                    <td>Pokud je to uvedeno, balíčky se po instalaci zachovají pro následné opravy. 
+ Tím se přepíše nastavení globální zásady, které se má použít pro následné instalace, opravy nebo úpravy. 
+ Výchozí zásada je ukládat balíčky do mezipaměti. Pro příkaz uninstall se to ignoruje.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--nocache</code></td>
+                    <td>Pokud je to uvedeno, balíčky se po instalaci nebo opravě se odstraní. 
+ Stáhnou se znovu jen v případě potřeby a po použití se znovu odstraní. 
+ Tím se přepíše nastavení globální zásady, které se má použít pro následné instalace, opravy nebo úpravy. 
+ Výchozí zásadou je ukládání balíčků do mezipaměti.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--noUpdateInstaller</code></td>
+                    <td>Pokud je to uvedeno a je zadán parametr quiet, zabrání instalačnímu programu v aktualizaci sebe sama. 
+ Pokud je zadáno noUpdateInstaller s parametrem quiet, když se vyžaduje aktualizace instalačního programu, příkaz instalačního programu selže a vrátí se nenulový ukončovací kód.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--noWeb</code></td>
+                    <td>Pokud je to uvedeno, instalační program Visual Studio použije soubory v adresáři rozložení k instalaci Visual Studia.
+ Pokud se uživatel pokusí nainstalovat součásti, které nejsou v rozložení, instalace se nezdaří.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path &lt;název&gt;=&lt;cesta&gt;</code></td>
+                    <td>Slouží k určení vlastních cest pro instalaci. Podporované názvy cest jsou shared, cache a install.</td>
+                </tr>
+                <tr>
+                    <td><code>--path cache=&lt;cesta&gt;</code></td>
+                    <td>Použije zadané umístění ke stažení instalačních souborů. Toto umístění lze nastavit pouze při první instalaci Visual Studia. 
+ Příklad: <code>--path cache="C:\VS\cache"</code>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path shared=&lt;cesta&gt;</code></td>
+                    <td>Obsahuje sdílené soubory pro souběžné instalace Visual Studio. 
+ Některé nástroje a sady SDK se nainstalují do umístění na této jednotce, zatímco jiné můžou toto nastavení přepsat a nainstalovat na jinou jednotku. 
+ Příklad: <code>--path shared="C:\VS\shared"</code> <br><br>Důležité: Tuto možnost lze nastavit pouze jednou, a to při první instalaci Visual Studia.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path install=&lt;path&gt;</code></td>
+                    <td>Ekvivalent <code>–-installPath</code>. Konkrétně, <code>--installPath "C:\VS"</code> a <code>--path install="C:\VS"</code> jsou ekvivalentní. 
+                        V jednom okamžiku lze použít pouze jeden z nich.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th>Národní prostředí jazyka</th>
+                    <th>Jazyk</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>cs-CZ</td>
+                    <td>Čeština</td>
+                </tr>
+                <tr>
+                    <td>de-DE</td>
+                    <td>Němčina</td>
+                </tr>
+                <tr>
+                    <td>cs-CZ</td>
+                    <td>Angličtina</td>
+                </tr>
+                <tr>
+                    <td>es-ES</td>
+                    <td>Španělština</td>
+                </tr>
+                <tr>
+                    <td>fr-FR</td>
+                    <td>Francouzština</td>
+                </tr>
+                <tr>
+                    <td>it-IT</td>
+                    <td>Italština</td>
+                </tr>
+                <tr>
+                    <td>ja-JP</td>
+                    <td>Japonština</td>
+                </tr>
+                <tr>
+                    <td>ko-KR</td>
+                    <td>Korejština</td>
+                </tr>
+                <tr>
+                    <td>pl-PL</td>
+                    <td>Polština</td>
+                </tr>
+                <tr>
+                    <td>pt-BR</td>
+                    <td>Portugalština – Brazílie</td>
+                </tr>
+                <tr>
+                    <td>ru-RU</td>
+                    <td>Ruština</td>
+                </tr>
+                <tr>
+                    <td>tr-TR</td>
+                    <td>Turečtina</td>
+                </tr>
+                <tr>
+                    <td>zh-CN</td>
+                    <td>Čínština (zjednodušená)</td>
+                </tr>
+                <tr>
+                    <td>zh-TW</td>
+                    <td>Čínština (tradiční)</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <p>
+        <br />
+        Podrobné pokyny najdete na
+        <span class="style1">
+            <a href="https://go.microsoft.com/fwlink/?LinkID=838246">https://go.microsoft.com/fwlink/?LinkID=838246</a>
+        </span>
+        <br />
+        <br />
+        Poslední změna:25. 5. 2022
+    </p>
+    <p>&nbsp;</p>
+</body>
+</html>

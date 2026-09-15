@@ -16,7 +16,21 @@ if not exist "%VENV_PY%" (
   exit /b 1
 )
 
-echo [1/3] Инициализация БД / импорт Excel...
+echo [1/5] Бэкап базы (WAL-safe)...
+"%VENV_PY%" -m app.backup_util
+
+echo [2/5] Миграции БД (Alembic)...
+pushd backend
+"%VENV_PY%" -m alembic upgrade head
+if errorlevel 1 (
+  popd
+  echo Ошибка миграций Alembic
+  pause
+  exit /b 1
+)
+popd
+
+echo [3/5] Инициализация БД / импорт Excel...
 "%VENV_PY%" backend\scripts\init_db.py
 if errorlevel 1 (
   echo Ошибка init_db
@@ -24,27 +38,16 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [2/3] Запуск API http://127.0.0.1:8000 ...
+echo [4/5] Запуск API http://127.0.0.1:8000 ...
 start "Kingisepp API" "%VENV_PY%" -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
 
-timeout /t 2 >nul
-
-if exist "cloudflared.exe" (
-  echo [3/3] Cloudflare Tunnel...
-  echo     В окне туннеля появится https://....trycloudflare.com
-  echo     Эту ссылку дайте мастерам в Кингисеппе и себе в Москве.
-  start "Kingisepp Tunnel" "%~dp0cloudflared.exe" tunnel --url http://127.0.0.1:8000
-) else (
-  echo [3/3] cloudflared.exe не найден.
-  echo     Локально: http://127.0.0.1:8000
-  echo     Из интернета: положите cloudflared.exe сюда и запустите tunnel.bat
-)
-
+echo [5/5] Готово.
 echo.
 echo ============================================
 echo  Локально:  http://127.0.0.1:8000
-echo  Admin:     ADMIN-OP / AdminOP2026
-echo  Docs API:  http://127.0.0.1:8000/docs
+echo  Swagger/docs в проде отключен.
 echo  База:      data\kingisepp.db
+echo  Внешний доступ: только VPN или start_remote.bat (Cloudflare Access).
+echo  Публичные туннели (trycloudflare/localtunnel) запрещены - утечка ПДн.
 echo ============================================
 pause

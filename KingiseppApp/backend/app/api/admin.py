@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timezone
 from pathlib import Path
 import shutil
 
@@ -19,18 +19,24 @@ from app.models import (
     Evaluation,
     EvaluationStatus,
     ListTicket,
+    TariffGrid,
+    TicketStatus,
     UrgentEvaluator,
     UrgentRequest,
+    UrgentStatus,
     User,
     UserRole,
+    UserStatus,
 )
 from app.schemas import (
     DashboardOut,
     DelegationIn,
     EmployeeCreateIn,
+    EmployeePatchIn,
     FormalizeCandidateIn,
     ImportResult,
     SecondAssignIn,
+    TariffGridOut,
     TicketOut,
     UserCreateIn,
     UserPatchIn,
@@ -39,20 +45,38 @@ from app.security import hash_password
 from app.services.evaluations import (
     count_closed_assignments,
     covering_evaluator_ids,
+    escalation_count,
+    escalation_report,
     repair_completed_urgents,
 )
 from app.services.events import emit_event
 from app.services.imports import (
     ensure_org_and_period,
+    ensure_org_by_id,
     import_base,
     import_carnet,
+    import_daily_assignees,
+    import_tariff_grid,
+    import_ud_rates,
     import_users,
     nf,
     resolve_assignment_registry_path,
 )
+from app.services.tariff import grid_bounds, is_rate_expired
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 settings = get_settings()
+
+
+def get_org_object(db: Session, model, obj_id: int, user: User):
+    """Достаёт объект и проверяет принадлежность организации авторизованного пользователя."""
+    obj = db.get(model, obj_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Не найдено")
+    if getattr(obj, "organization_id", None) != user.organization_id:
+        # 403 вместо 404 — предотвращает enumeration объектов между организациями
+        raise HTTPException(status_code=403, detail="Доступ запрещён")
+    return obj
 
 
 class UrgentCreateIn(BaseModel):
@@ -79,54 +103,12 @@ class TicketPatchIn(BaseModel):
     admin_note: str | None = None
 
 
-def _escalation_count(db: Session, org_id: int, period_id: int) -> int:
-    threshold = datetime.utcnow() - timedelta(days=3)
-    primaries = (
-        db.query(Assignment.primary_user_id)
-        .filter(
-            Assignment.period_id == period_id,
-            Assignment.evaluate.is_(True),
-            Assignment.primary_user_id.is_not(None),
-        )
-        .distinct()
-        .all()
-    )
-    count = 0
-    for (uid,) in primaries:
-        user = db.get(User, uid)
-        if not user:
-            continue
-        pending = (
-            db.query(Assignment)
-            .filter(
-                Assignment.period_id == period_id,
-                Assignment.primary_user_id == uid,
-                Assignment.evaluate.is_(True),
-            )
-            .count()
-        )
-        submitted = (
-            db.query(Evaluation)
-            .join(Assignment, Assignment.id == Evaluation.assignment_id)
-            .filter(
-                Evaluation.evaluator_id == uid,
-                Evaluation.status == EvaluationStatus.submitted,
-                Evaluation.assignment_id.is_not(None),
-                Assignment.period_id == period_id,
-            )
-            .count()
-        )
-        if pending > submitted and (user.last_login_at is None or user.last_login_at < threshold):
-            count += 1
-    return count
-
-
 @router.get("/dashboard", response_model=DashboardOut)
 def dashboard(
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ) -> DashboardOut:
-    org, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    org, period = ensure_org_by_id(db, user.organization_id)
     # Починить уже отвеченные, но незакрытые срочные (старые данные)
     repair_completed_urgents(db)
     total = db.query(Assignment).filter(Assignment.period_id == period.id).count()
@@ -158,14 +140,17 @@ def dashboard(
     )
     open_urgent = (
         db.query(UrgentRequest)
-        .filter(UrgentRequest.organization_id == org.id, UrgentRequest.status == "open")
+        .filter(
+            UrgentRequest.organization_id == org.id,
+            UrgentRequest.status == UrgentStatus.open,
+        )
         .count()
     )
     open_tickets = (
         db.query(ListTicket)
         .filter(
             ListTicket.organization_id == org.id,
-            ListTicket.status.in_(["new", "in_progress"]),
+            ListTicket.status.in_([TicketStatus.new, TicketStatus.in_progress]),
         )
         .count()
     )
@@ -181,7 +166,7 @@ def dashboard(
         dual_enabled=dual,
         open_urgent=open_urgent,
         open_tickets=open_tickets,
-        escalations=_escalation_count(db, org.id, period.id),
+        escalations=escalation_count(db, organization_id=org.id, period_id=period.id),
     )
 
 
@@ -191,7 +176,7 @@ def import_all_excel(
     db: Session = Depends(get_db),
 ) -> list[ImportResult]:
     files_dir = settings.files_path
-    org, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    org, period = ensure_org_by_id(db, user.organization_id)
     base = files_dir / "01_База_1С.xlsx"
     users = files_dir / "02_Пользователи.xlsx"
     registry = resolve_assignment_registry_path(files_dir)
@@ -212,18 +197,37 @@ async def import_upload(
     base_file: UploadFile | None = File(None, description="01_База_1С.xlsx"),
     users_file: UploadFile | None = File(None, description="02_Пользователи.xlsx"),
     carnet_file: UploadFile | None = File(None, description="03_Реестр_закрепления.xlsx"),
+    ud_file: UploadFile | None = File(None, description="УД_Список сотрудников (.xlsb)"),
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ) -> list[ImportResult]:
     """Загрузка Excel прямо из браузера."""
-    if not base_file and not users_file and not carnet_file:
+    if not base_file and not users_file and not carnet_file and not ud_file:
         raise HTTPException(status_code=400, detail="Выберите хотя бы один Excel-файл")
-    org, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    org, period = ensure_org_by_id(db, user.organization_id)
     files_dir = settings.files_path
     files_dir.mkdir(parents=True, exist_ok=True)
     results: list[ImportResult] = []
 
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    XLSX_MAGIC = b"PK\x03\x04"
+
     async def _save(upload: UploadFile, target_name: str) -> Path:
+        # Валидация: сигнатура xlsx/xlsb (zip-контейнер) и лимит размера.
+        head = await upload.read(4)
+        await upload.seek(0)
+        if head != XLSX_MAGIC:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{target_name}: файл не является Excel (.xlsx/.xlsb)",
+            )
+        content = await upload.read(max_bytes + 1)
+        await upload.seek(0)
+        if len(content) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"{target_name}: размер превышает {settings.max_upload_mb} МБ",
+            )
         dest = files_dir / target_name
         with dest.open("wb") as out:
             shutil.copyfileobj(upload.file, out)
@@ -238,7 +242,86 @@ async def import_upload(
     if carnet_file and carnet_file.filename:
         path = await _save(carnet_file, "03_Реестр_закрепления.xlsx")
         results.append(import_carnet(db, path, org, period, user.id))
+    if ud_file and ud_file.filename:
+        path = await _save(ud_file, "УД_Список_сотрудников.xlsb")
+        results.append(import_ud_rates(db, path, org, user.id))
     return results
+
+
+@router.post("/import/daily-assignees", response_model=ImportResult)
+async def import_daily_assignees_file(
+    daily_file: UploadFile = File(..., description="Ежедневная выгрузка (Табельный/ФИО/Должность/Участок/Прораб)"),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
+    db: Session = Depends(get_db),
+) -> ImportResult:
+    """Упрощённый ежедневный импорт: один Excel → поиск сотрудника по табельному,
+    обновление ФИО/должности и создание/обновление закрепления на открытый период."""
+    head = await daily_file.read(4)
+    await daily_file.seek(0)
+    if head != b"PK\x03\x04":
+        raise HTTPException(status_code=400, detail="Файл не является Excel (.xlsx)")
+    # Проверка размера файла — защита от zip-bomb и исчерпания памяти
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    content = await daily_file.read(max_bytes + 1)
+    await daily_file.seek(0)
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Размер файла превышает {settings.max_upload_mb} МБ",
+        )
+    files_dir = settings.files_path
+    files_dir.mkdir(parents=True, exist_ok=True)
+    dest = files_dir / "Ежедневная_выгрузка.xlsx"
+    with dest.open("wb") as out:
+        out.write(content)
+    org, period = ensure_org_by_id(db, user.organization_id)
+    return import_daily_assignees(db, dest, org, period, user.id)
+
+
+@router.post("/import/tariff-grid", response_model=list[ImportResult])
+async def import_tariff_grid_file(
+    grid_file: UploadFile = File(..., description="Сводная_тарифная_сетка.xlsx"),
+    user: User = Depends(require_roles(UserRole.admin_op)),
+    db: Session = Depends(get_db),
+) -> list[ImportResult]:
+    """Загрузка тарифной сетки (мин/макс ЧТС по должности и гражданству). Только ADMIN-OP."""
+    if not grid_file.filename:
+        raise HTTPException(status_code=400, detail="Файл не выбран")
+    org, _period = ensure_org_by_id(db, user.organization_id)
+    files_dir = settings.files_path
+    files_dir.mkdir(parents=True, exist_ok=True)
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    head = await grid_file.read(4)
+    await grid_file.seek(0)
+    if head != b"PK\x03\x04":
+        raise HTTPException(status_code=400, detail="Файл не является Excel (.xlsx)")
+    content = await grid_file.read(max_bytes + 1)
+    await grid_file.seek(0)
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=413, detail=f"Размер превышает {settings.max_upload_mb} МБ")
+    dest = files_dir / "Сводная_тарифная_сетка.xlsx"
+    with dest.open("wb") as out:
+        shutil.copyfileobj(grid_file.file, out)
+    result = import_tariff_grid(db, dest, org.id, user.id)
+    return [result]
+
+
+@router.get("/tariff-grid", response_model=list[TariffGridOut])
+def list_tariff_grid(
+    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
+    db: Session = Depends(get_db),
+) -> list[TariffGridOut]:
+    """Список тарифной сетки (для проверки после импорта)."""
+    rows = (
+        db.query(TariffGrid)
+        .order_by(TariffGrid.citizenship, TariffGrid.position)
+        .limit(2000)
+        .all()
+    )
+    return [
+        TariffGridOut(position=r.position, citizenship=r.citizenship, min_rate=r.min_rate, max_rate=r.max_rate)
+        for r in rows
+    ]
 
 
 @router.get("/assignments")
@@ -250,7 +333,7 @@ def list_assignments(
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ):
-    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    _, period = ensure_org_by_id(db, user.organization_id)
     query = (
         db.query(Assignment, Employee, User)
         .join(Employee, Employee.id == Assignment.employee_id)
@@ -300,7 +383,7 @@ def bulk_assignments(
     if body.primary_user_id is None and body.evaluate is None:
         raise HTTPException(status_code=400, detail="Укажите primary_user_id и/или evaluate")
 
-    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    _, period = ensure_org_by_id(db, user.organization_id)
 
     primary: User | None = None
     if body.primary_user_id is not None:
@@ -311,11 +394,12 @@ def bulk_assignments(
             or primary.role not in (UserRole.master, UserRole.foreman)
         ):
             raise HTTPException(status_code=400, detail="Нужен мастер или прораб этой организации")
-        if primary.status != "Активен":
+        if primary.status != UserStatus.active:
             raise HTTPException(status_code=400, detail="Оценщик отключён")
 
     updated = 0
     errors: list[str] = []
+    changes: list[tuple[int, dict]] = []
 
     for aid in body.assignment_ids:
         asg = db.get(Assignment, aid)
@@ -326,17 +410,22 @@ def bulk_assignments(
         ):
             errors.append(f"id={aid}: не найден в текущем периоде")
             continue
+        change: dict = {}
         if body.primary_user_id is not None:
             asg.primary_user_id = body.primary_user_id
+            change["primary_user_id"] = body.primary_user_id
         if body.evaluate is not None:
             if body.evaluate and not asg.primary_user_id:
                 errors.append(f"id={aid}: нельзя отправить без закреплённого оценщика")
                 continue
             asg.evaluate = bool(body.evaluate)
+            change["evaluate"] = body.evaluate
         if asg.evaluate and not asg.primary_user_id:
             errors.append(f"id={aid}: evaluate без primary")
             continue
         asg.version = (asg.version or 1) + 1
+        change["version"] = asg.version
+        changes.append((aid, change))
         updated += 1
 
     if updated:
@@ -351,7 +440,7 @@ def bulk_assignments(
                 "count": updated,
                 "primary_user_id": body.primary_user_id,
                 "evaluate": body.evaluate,
-                "assignment_ids": body.assignment_ids[:50],
+                "assignment_ids": [c[0] for c in changes],
             },
         )
         db.commit()
@@ -373,9 +462,7 @@ def patch_assignment(
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ):
-    asg = db.get(Assignment, assignment_id)
-    if not asg:
-        raise HTTPException(status_code=404, detail="Не найдено")
+    asg = get_org_object(db, Assignment, assignment_id, user)
     data = body.model_dump(exclude_unset=True)
     if "primary_user_id" in data:
         asg.primary_user_id = data["primary_user_id"]
@@ -411,7 +498,7 @@ def second_evaluation(
     db: Session = Depends(get_db),
 ):
     """Сотрудники периода со статусами 1-го и 2-го оценщика (вкладка «Вторая оценка»)."""
-    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    _, period = ensure_org_by_id(db, user.organization_id)
     rows = (
         db.query(Assignment, Employee)
         .join(Employee, Employee.id == Assignment.employee_id)
@@ -489,7 +576,7 @@ def assign_secondary(
     db: Session = Depends(get_db),
 ):
     """Назначить 2-го оценщика (только начальник участка, только своего участка) или снять его."""
-    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    _, period = ensure_org_by_id(db, user.organization_id)
 
     chief: User | None = None
     if body.secondary_user_id is not None:
@@ -501,7 +588,7 @@ def assign_secondary(
                 status_code=400,
                 detail="2-м оценщиком может быть только начальник участка",
             )
-        if chief.status != "Активен":
+        if chief.status != UserStatus.active:
             raise HTTPException(status_code=400, detail="Начальник участка отключён")
         if not chief.site_name:
             raise HTTPException(
@@ -518,30 +605,34 @@ def assign_secondary(
             continue
         emp = db.get(Employee, asg.employee_id)
         label = emp.fio if emp else f"id={aid}"
-        if chief is not None:
-            if not asg.evaluate:
-                errors.append(f"{label}: сотрудник не на оценке (evaluate=нет)")
-                continue
-            if not asg.primary_user_id:
-                errors.append(f"{label}: сначала назначьте 1-го оценщика")
-                continue
-            if not asg.site_name or nf(asg.site_name) != nf(chief.site_name):
-                errors.append(
-                    f"{label}: участок «{asg.site_name or '—'}» ≠ участок начальника «{chief.site_name}»"
-                )
-                continue
-            if asg.primary_user_id == chief.id:
-                errors.append(f"{label}: 1-й и 2-й оценщик совпадают")
-                continue
-            asg.secondary_user_id = chief.id
-            asg.dual_enabled = True
-        else:
-            if not asg.secondary_user_id:
-                continue  # и так без 2-го — не считаем ошибкой
-            asg.secondary_user_id = None
-            asg.dual_enabled = False
-        asg.version = (asg.version or 1) + 1
-        updated += 1
+        try:
+            if chief is not None:
+                if not asg.evaluate:
+                    errors.append(f"{label}: сотрудник не на оценке (evaluate=нет)")
+                    continue
+                if not asg.primary_user_id:
+                    errors.append(f"{label}: сначала назначьте 1-го оценщика")
+                    continue
+                if not asg.site_name or nf(asg.site_name) != nf(chief.site_name):
+                    errors.append(
+                        f"{label}: участок «{asg.site_name or '—'}» ≠ участок начальника «{chief.site_name}»"
+                    )
+                    continue
+                if asg.primary_user_id == chief.id:
+                    errors.append(f"{label}: 1-й и 2-й оценщик совпадают")
+                    continue
+                asg.secondary_user_id = chief.id
+                asg.dual_enabled = True
+            else:
+                if not asg.secondary_user_id:
+                    continue  # и так без 2-го — не считаем ошибкой
+                asg.secondary_user_id = None
+                asg.dual_enabled = False
+            asg.version = (asg.version or 1) + 1
+            updated += 1
+        except Exception as e:
+            db.rollback()
+            errors.append(f"{label}: ошибка при обработке — {e}")
 
     if updated:
         emit_event(
@@ -585,7 +676,7 @@ def create_urgent(
         .filter(
             UrgentRequest.organization_id == user.organization_id,
             UrgentRequest.employee_id == emp.id,
-            UrgentRequest.status == "open",
+            UrgentRequest.status == UrgentStatus.open,
         )
         .first()
     )
@@ -627,11 +718,9 @@ def close_urgent(
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ):
-    ur = db.get(UrgentRequest, urgent_id)
-    if not ur:
-        raise HTTPException(status_code=404, detail="Не найдено")
-    ur.status = "closed"
-    ur.closed_at = datetime.utcnow()
+    ur = get_org_object(db, UrgentRequest, urgent_id, user)
+    ur.status = UrgentStatus.closed
+    ur.closed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     emit_event(
         db,
         organization_id=user.organization_id,
@@ -695,7 +784,7 @@ def create_delegation(
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ):
-    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    _, period = ensure_org_by_id(db, user.organization_id)
     orig = db.get(User, body.original_user_id)
     sub = db.get(User, body.substitute_user_id)
     if not orig or not sub:
@@ -764,9 +853,7 @@ def deactivate_delegation(
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ):
-    d = db.get(Delegation, delegation_id)
-    if not d:
-        raise HTTPException(status_code=404, detail="Не найдено")
+    d = get_org_object(db, Delegation, delegation_id, user)
     d.is_active = False
     db.commit()
     return {"ok": True}
@@ -781,7 +868,7 @@ def list_users(
 ):
     q = db.query(User).filter(User.organization_id == user.organization_id)
     if not all:
-        q = q.filter(User.status == "Активен")
+        q = q.filter(User.status == UserStatus.active)
     if role:
         q = q.filter(User.role == role)
     return [
@@ -810,6 +897,12 @@ def patch_user(
     target = db.get(User, user_id)
     if not target or target.organization_id != user.organization_id:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
+    # Запрет эскалации: admin_op не может менять системного администратора (роль, статус, пароль).
+    if user.role == UserRole.admin_op and target.role == UserRole.admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Администрация ОП не может изменять системного администратора",
+        )
 
     data = body.model_dump(exclude_unset=True)
     if target.id == user.id and (
@@ -836,6 +929,9 @@ def patch_user(
         target.status = data["status"].strip()
     if "password" in data and data["password"]:
         target.password_hash = hash_password(data["password"].strip())
+        # F03 FIX: увеличиваем token_version — старые токены отзываются
+        target.token_version = (target.token_version or 0) + 1
+        target.must_change_password = True
 
     emit_event(
         db,
@@ -884,6 +980,16 @@ def create_user(
             status_code=403,
             detail="Администрация ОП не может создавать системного админа",
         )
+    # admin_op может создавать только master/foreman/site_chief — предотвращает privilege creep
+    if user.role == UserRole.admin_op and body.role not in (
+        UserRole.master,
+        UserRole.foreman,
+        UserRole.site_chief,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Администрация ОП может создавать только мастеров, прорабов и начальников участков",
+        )
     target = User(
         organization_id=user.organization_id,
         tab_no=tab_no,
@@ -891,7 +997,7 @@ def create_user(
         role=body.role,
         site_code=(body.site_code or "").strip() or None,
         site_name=(body.site_name or "").strip() or None,
-        status=body.status.strip() or "Активен",
+        status=body.status.strip() or UserStatus.active.value,
         password_hash=hash_password(body.password.strip()),
     )
     db.add(target)
@@ -923,19 +1029,27 @@ def list_employees(
     if q:
         like = f"%{q}%"
         query = query.filter((Employee.fio.ilike(like)) | (Employee.tab_no.ilike(like)))
-    return [
-        {
-            "id": e.id,
-            "tab_no": e.tab_no,
-            "fio": e.fio,
-            "position_1c": e.position_1c,
-            "is_candidate": e.is_candidate,
-            "hire_date": e.hire_date,
-            "hourly_rate": e.hourly_rate,
-            "rate_updated_at": e.rate_updated_at,
-        }
-        for e in query.order_by(Employee.fio).limit(limit).all()
-    ]
+    out: list[dict] = []
+    for e in query.order_by(Employee.fio).limit(limit).all():
+        t_min, t_max = grid_bounds(db, e.position_1c, e.citizenship)
+        out.append(
+            {
+                "id": e.id,
+                "tab_no": e.tab_no,
+                "fio": e.fio,
+                "position_1c": e.position_1c,
+                "is_candidate": e.is_candidate,
+                "hire_date": e.hire_date,
+                "citizenship": e.citizenship,
+                "hourly_rate": e.hourly_rate,
+                "rate_updated_at": e.rate_updated_at,
+                "rate_last_raised": e.rate_last_raised,
+                "is_rate_expired": is_rate_expired(e.rate_last_raised),
+                "tariff_min": t_min,
+                "tariff_max": t_max,
+            }
+        )
+    return out
 
 
 @router.post("/employees")
@@ -975,14 +1089,66 @@ def create_employee(
     return {"employee_id": emp.id}
 
 
+@router.patch("/employees/{employee_id}")
+def patch_employee(
+    employee_id: int,
+    body: EmployeePatchIn,
+    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
+    db: Session = Depends(get_db),
+):
+    """Правка ЧТС и даты последнего поднятия. При изменении ЧТС дата ставится автоматически = сегодня."""
+    emp = get_org_object(db, Employee, employee_id, user)
+    changed: dict = {}
+    if body.hourly_rate is not None:
+        new_rate = round(float(body.hourly_rate), 2)
+        if new_rate != (emp.hourly_rate or 0.0):
+            emp.hourly_rate = new_rate
+            # Подняли ставку — дата последнего повышения = сегодня.
+            emp.rate_last_raised = date.today()
+            emp.rate_updated_at = date.today()
+            changed["hourly_rate"] = new_rate
+            changed["rate_last_raised"] = emp.rate_last_raised.isoformat()
+    if body.rate_last_raised is not None:
+        emp.rate_last_raised = body.rate_last_raised
+        changed["rate_last_raised"] = body.rate_last_raised.isoformat()
+    if not changed:
+        raise HTTPException(status_code=400, detail="Нет изменений для сохранения")
+    emit_event(
+        db,
+        organization_id=user.organization_id,
+        actor_user_id=user.id,
+        entity_type="employee",
+        entity_id=emp.id,
+        action="rate_updated",
+        payload=changed,
+    )
+    db.commit()
+    t_min, t_max = grid_bounds(db, emp.position_1c, emp.citizenship)
+    return {
+        "id": emp.id,
+        "tab_no": emp.tab_no,
+        "fio": emp.fio,
+        "position_1c": emp.position_1c,
+        "is_candidate": emp.is_candidate,
+        "hire_date": emp.hire_date,
+        "citizenship": emp.citizenship,
+        "hourly_rate": emp.hourly_rate,
+        "rate_updated_at": emp.rate_updated_at,
+        "rate_last_raised": emp.rate_last_raised,
+        "is_rate_expired": is_rate_expired(emp.rate_last_raised),
+        "tariff_min": t_min,
+        "tariff_max": t_max,
+    }
+
+
 @router.post("/employees/formalize-candidate")
 def formalize_candidate(
     body: FormalizeCandidateIn,
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ):
-    emp = db.get(Employee, body.employee_id)
-    if not emp or not emp.is_candidate:
+    emp = get_org_object(db, Employee, body.employee_id, user)
+    if not emp.is_candidate:
         raise HTTPException(status_code=404, detail="Кандидат не найден")
     clash = (
         db.query(Employee)
@@ -1055,17 +1221,16 @@ def patch_ticket(
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ):
-    t = db.get(ListTicket, ticket_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Не найдено")
+    t = get_org_object(db, ListTicket, ticket_id, user)
     if body.status is not None:
-        if body.status not in {"new", "in_progress", "done"}:
+        allowed_statuses = {s.value for s in TicketStatus}
+        if body.status not in allowed_statuses:
             raise HTTPException(status_code=400, detail="Неверный статус")
         t.status = body.status
     if body.admin_note is not None:
         t.admin_note = body.admin_note.strip() or None
-        if t.admin_note and t.status == "new":
-            t.status = "in_progress"
+        if t.admin_note and t.status == TicketStatus.new:
+            t.status = TicketStatus.in_progress
     emit_event(
         db,
         organization_id=user.organization_id,
@@ -1123,52 +1288,5 @@ def list_escalations(
     user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
     db: Session = Depends(get_db),
 ):
-    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
-    threshold = datetime.utcnow() - timedelta(days=3)
-    out = []
-    primaries = (
-        db.query(Assignment.primary_user_id)
-        .filter(
-            Assignment.period_id == period.id,
-            Assignment.evaluate.is_(True),
-            Assignment.primary_user_id.is_not(None),
-        )
-        .distinct()
-        .all()
-    )
-    for (uid,) in primaries:
-        u = db.get(User, uid)
-        if not u:
-            continue
-        pending = (
-            db.query(Assignment)
-            .filter(
-                Assignment.period_id == period.id,
-                Assignment.primary_user_id == uid,
-                Assignment.evaluate.is_(True),
-            )
-            .count()
-        )
-        submitted = (
-            db.query(Evaluation)
-            .join(Assignment, Assignment.id == Evaluation.assignment_id)
-            .filter(
-                Evaluation.evaluator_id == uid,
-                Evaluation.status == EvaluationStatus.submitted,
-                Evaluation.assignment_id.is_not(None),
-                Assignment.period_id == period.id,
-            )
-            .count()
-        )
-        if pending > submitted and (u.last_login_at is None or u.last_login_at < threshold):
-            out.append(
-                {
-                    "user_id": u.id,
-                    "tab_no": u.tab_no,
-                    "fio": u.fio,
-                    "last_login_at": u.last_login_at,
-                    "pending_assignments": pending,
-                    "submitted": submitted,
-                }
-            )
-    return out
+    _, period = ensure_org_by_id(db, user.organization_id)
+    return escalation_report(db, organization_id=user.organization_id, period_id=period.id)

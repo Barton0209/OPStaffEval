@@ -9,9 +9,9 @@ if errorlevel 1 (
 )
 
 netsh advfirewall firewall delete rule name="Kingisepp Caddy 8080" >nul 2>&1
-netsh advfirewall firewall add rule name="Kingisepp Caddy 8080" dir=in action=allow protocol=TCP localport=8080 profile=any
+netsh advfirewall firewall add rule name="Kingisepp Caddy 8080" dir=in action=allow protocol=TCP localport=8080 profile=private
 echo.
-echo Правило добавлено: входящий TCP 8080 разрешён.
-echo На телефоне снова откройте: http://10.134.191.99:8080
+echo Правило добавлено: входящий TCP 8080 разрешён ТОЛЬКО в частной сети (LAN).
+echo На телефоне в той же Wi-Fi откройте: http://IP-ПК:8080
 echo.
 pause

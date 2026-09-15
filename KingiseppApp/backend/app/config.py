@@ -17,18 +17,31 @@ class Settings(BaseSettings):
     app_name: str = "KingiseppApp"
     org_code: str = "kingisepp"
     org_name: str = "Кингисепп (ВСМ)"
-    secret_key: str = "change-me-in-production-kingisepp-2026"
-    access_token_expire_minutes: int = 720
+    secret_key: str = ""
+    access_token_expire_minutes: int = 60
+    # Мягкое продление: если до истечения токена осталось меньше минут — выдать X-New-Token.
+    token_renew_before_minutes: int = 30
     database_url: str = ""
     host: str = "127.0.0.1"
     port: int = 8000
     files_dir: str = str((APP_ROOT.parent / "Files").resolve())
-    cors_origins: str = "*"
+    cors_origins: str = ""
+    cors_origin_regex: str = ""
+    cookie_secure: bool = False
+    cookie_samesite: str = "lax"
+    expose_docs: bool = False
+    max_upload_mb: int = 10
 
     def model_post_init(self, __context) -> None:  # noqa: ANN001
         if not self.database_url.strip():
             db_path = (APP_ROOT / "data" / "kingisepp.db").resolve().as_posix()
             object.__setattr__(self, "database_url", f"sqlite:///{db_path}")
+        if not self.secret_key.strip() or len(self.secret_key) < 32:
+            raise ValueError(
+                "SECRET_KEY не задан или слишком слабый (< 32 символов). Сгенерируйте новый:\n"
+                '  python -c "import secrets; print(secrets.token_hex(32))"\n'
+                "и укажите его в .env (SECRET_KEY=...)."
+            )
 
     @property
     def data_dir(self) -> Path:

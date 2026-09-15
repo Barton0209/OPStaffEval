@@ -1,0 +1,5 @@
+{
+  "productId": "Microsoft.VisualStudio.Product.BuildTools",
+  "channelId": "VisualStudio.18.Release",
+  "channelUri": "https://aka.ms/vs/18/stable/channel"
+}

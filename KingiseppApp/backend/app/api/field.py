@@ -1,25 +1,31 @@
-from datetime import date, datetime
+import json
+from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
-from app.deps import get_current_user, touch_login
+from app.deps import get_current_user, get_current_user_allow_password_change, touch_login
 from app.models import (
     Assignment,
     Delegation,
+    DomainEvent,
     Employee,
     Evaluation,
     EvaluationPeriod,
     EvaluationStatus,
     ListTicket,
+    TicketStatus,
     UrgentEvaluator,
     UrgentRequest,
+    UrgentStatus,
     User,
     UserRole,
 )
+from app.rate_limit import limiter
 from app.schemas import (
     AssignmentListItem,
+    ChangePasswordIn,
     EvaluationOut,
     EvaluationScoresIn,
     LoginIn,
@@ -28,17 +34,49 @@ from app.schemas import (
     TokenOut,
     UserMe,
 )
-from app.security import authenticate_user, create_access_token
+from app.security import authenticate_user, create_access_token, hash_password, verify_password
 from app.services.evaluations import (
     close_urgent_if_complete,
     covering_evaluator_ids,
+    covering_map,
     link_evaluation_to_period_assignment,
     site_matches,
 )
-from app.services.imports import nf
 from app.services.events import emit_event
+from app.services.imports import nf
+from app.services.tariff import bounds_from_index, is_rate_expired, load_grid_index
 
 router = APIRouter(prefix="/api/field", tags=["field"])
+
+
+def _assignment_conflict_diff(
+    db: Session, asg: Assignment, submitted_version: int | None
+) -> dict:
+    """Best-effort diff: последнее изменение назначения из event log."""
+    ev = (
+        db.query(DomainEvent)
+        .filter(
+            DomainEvent.entity_type == "assignment",
+            DomainEvent.entity_id == asg.id,
+            DomainEvent.action.in_(
+                ["updated", "bulk_updated", "secondary_assigned", "secondary_removed"]
+            ),
+        )
+        .order_by(DomainEvent.id.desc())
+        .first()
+    )
+    server_changes: dict = {}
+    if ev and ev.payload_json:
+        try:
+            server_changes = json.loads(ev.payload_json)
+        except (TypeError, ValueError):
+            server_changes = {}
+    return {
+        "current_version": asg.version,
+        "submitted_version": submitted_version,
+        "server_changes": server_changes,
+        "changed_at": ev.created_at.isoformat() if ev and ev.created_at else None,
+    }
 
 
 def _avg(ev: Evaluation) -> float | None:
@@ -72,7 +110,8 @@ def _active_substitute_ids(db: Session, user: User, period_id: int) -> set[int]:
 
 
 @router.post("/auth/login", response_model=TokenOut)
-def login(body: LoginIn, db: Session = Depends(get_db)) -> TokenOut:
+@limiter.limit("5/minute")
+def login(request: Request, body: LoginIn, db: Session = Depends(get_db)) -> TokenOut:
     user = authenticate_user(db, body.tab_no, body.password)
     if not user:
         raise HTTPException(status_code=401, detail="Неверный табельный номер или пароль")
@@ -104,6 +143,47 @@ def login(body: LoginIn, db: Session = Depends(get_db)) -> TokenOut:
         organization_id=user.organization_id,
         site_code=user.site_code,
         site_name=user.site_name,
+        must_change_password=user.must_change_password,
+    )
+
+
+@router.post("/me/password", response_model=TokenOut)
+@limiter.limit("3/minute")
+def change_my_password(
+    request: Request,
+    body: ChangePasswordIn,
+    user: User = Depends(get_current_user_allow_password_change),
+    db: Session = Depends(get_db),
+) -> TokenOut:
+    """Self-service смена пароля (доступен и при must_change_password=True)."""
+    if not verify_password(body.old_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Неверный текущий пароль")
+    if body.old_password == body.new_password:
+        raise HTTPException(status_code=400, detail="Новый пароль совпадает со старым")
+    user.password_hash = hash_password(body.new_password.strip())
+    user.must_change_password = False
+    # Инвалидация всех ранее выданных токенов пользователя.
+    user.token_version = (user.token_version or 0) + 1
+    emit_event(
+        db,
+        organization_id=user.organization_id,
+        actor_user_id=user.id,
+        entity_type="user",
+        entity_id=user.id,
+        action="password_changed",
+        payload={"tab_no": user.tab_no},
+    )
+    db.commit()
+    token = create_access_token(user)
+    return TokenOut(
+        access_token=token,
+        role=user.role,
+        fio=user.fio,
+        tab_no=user.tab_no,
+        organization_id=user.organization_id,
+        site_code=user.site_code,
+        site_name=user.site_name,
+        must_change_password=False,
     )
 
 
@@ -125,19 +205,29 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
 
     items: list[AssignmentListItem] = []
     substitute_for = _active_substitute_ids(db, user, period.id)
+    grid_index = load_grid_index(db)  # один запрос на весь список — без N+1
 
-    # Все сданные анкеты периода одним запросом — для «общей оценки» и статуса второго оценщика
-    submitted_by_key: dict[tuple[int, int], Evaluation] = {}
-    for e in (
+    # Batch-загрузка анкет периода (все статусы) — устраняет N+1 в циклах ниже.
+    all_evs = (
         db.query(Evaluation)
         .join(Assignment, Assignment.id == Evaluation.assignment_id)
         .filter(
             Assignment.period_id == period.id,
-            Evaluation.status == EvaluationStatus.submitted,
+            Evaluation.assignment_id.is_not(None),
         )
         .all()
-    ):
-        submitted_by_key[(e.assignment_id, e.evaluator_id)] = e
+    )
+    evs_by_asg: dict[int, list[Evaluation]] = {}
+    submitted_by_key: dict[tuple[int, int], Evaluation] = {}
+    for e in all_evs:
+        evs_by_asg.setdefault(e.assignment_id, []).append(e)
+        if e.status == EvaluationStatus.submitted:
+            submitted_by_key[(e.assignment_id, e.evaluator_id)] = e
+
+    # Замещения периода — один запрос (для dual-блоков).
+    covering_map_period = covering_map(
+        db, organization_id=user.organization_id, period_id=period.id
+    )
 
     # Planned assignments
     q = (
@@ -168,15 +258,8 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
         ):
             continue
 
-        ev = (
-            db.query(Evaluation)
-            .filter(
-                Evaluation.assignment_id == asg.id,
-                Evaluation.evaluator_id == user.id,
-            )
-            .order_by(Evaluation.id.desc())
-            .first()
-        )
+        mine = [e for e in evs_by_asg.get(asg.id, []) if e.evaluator_id == user.id]
+        ev = max(mine, key=lambda e: e.id) if mine else None
         emp: Employee = asg.employee
 
         # Общая оценка (1-й + 2-й) — видна, когда обе анкеты сданы; баллы другого оценщика не раскрываются
@@ -184,11 +267,10 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
         peer_submitted = False
         if asg.dual_enabled and asg.secondary_user_id:
             peer_original = asg.secondary_user_id if my_role == "primary" else asg.primary_user_id
-            peer_ids = covering_evaluator_ids(
-                db,
-                organization_id=user.organization_id,
-                period_id=period.id,
-                original_user_id=peer_original,
+            peer_ids = (
+                covering_map_period.get(peer_original, set()) | {peer_original}
+                if peer_original
+                else set()
             )
             peer_ev = None
             for pid in peer_ids:
@@ -204,6 +286,11 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
                     combined = round((my_avg + peer_avg) / 2, 2)
 
         show_rate = user.role == UserRole.site_chief
+        t_min, t_max = (
+            bounds_from_index(grid_index, asg.position_fact or emp.position_1c, emp.citizenship)
+            if show_rate
+            else (None, None)
+        )
         items.append(
             AssignmentListItem(
                 assignment_id=asg.id,
@@ -224,6 +311,10 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
                 is_urgent=False,
                 hourly_rate=emp.hourly_rate if show_rate else None,
                 rate_updated_at=emp.rate_updated_at if show_rate else None,
+                rate_last_raised=emp.rate_last_raised if show_rate else None,
+                is_rate_expired=is_rate_expired(emp.rate_last_raised) if show_rate else False,
+                tariff_min=t_min if show_rate else None,
+                tariff_max=t_max if show_rate else None,
                 combined_score=combined if show_rate else None,
                 peer_submitted=peer_submitted,
             )
@@ -239,18 +330,25 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
         seen_keys.add(("a" if not it.is_urgent else "u", it.employee_id if it.is_urgent else it.assignment_id))
 
     if urgent_ids:
+        my_urgent_evs = (
+            db.query(Evaluation)
+            .filter(
+                Evaluation.urgent_request_id.in_(urgent_ids),
+                Evaluation.evaluator_id == user.id,
+            )
+            .all()
+        )
+        evs_by_urgent: dict[int, list[Evaluation]] = {}
+        for e in my_urgent_evs:
+            evs_by_urgent.setdefault(e.urgent_request_id, []).append(e)
         for ur in (
             db.query(UrgentRequest)
             .options(joinedload(UrgentRequest.employee))
             .filter(UrgentRequest.id.in_(urgent_ids), UrgentRequest.status == "open")
             .all()
         ):
-            ev = (
-                db.query(Evaluation)
-                .filter(Evaluation.urgent_request_id == ur.id, Evaluation.evaluator_id == user.id)
-                .order_by(Evaluation.id.desc())
-                .first()
-            )
+            urg_mine = evs_by_urgent.get(ur.id, [])
+            ev = max(urg_mine, key=lambda e: e.id) if urg_mine else None
             if ev and ev.status == EvaluationStatus.submitted:
                 continue
             emp = ur.employee
@@ -289,6 +387,12 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
         .limit(300)
         .all()
     )
+    done_asg_ids = [e.assignment_id for e in submitted_evs if e.assignment_id]
+    asg_map = (
+        {a.id: a for a in db.query(Assignment).filter(Assignment.id.in_(done_asg_ids)).all()}
+        if done_asg_ids
+        else {}
+    )
     for ev in submitted_evs:
         emp = ev.employee
         if ev.assignment_id and ("a", ev.assignment_id) in seen_keys:
@@ -306,7 +410,7 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
             for i in items
         ):
             continue
-        asg = db.get(Assignment, ev.assignment_id) if ev.assignment_id else None
+        asg = asg_map.get(ev.assignment_id) if ev.assignment_id else None
         combined = None
         peer_submitted = False
         if asg and asg.dual_enabled and asg.secondary_user_id:
@@ -319,6 +423,14 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
                 peer_avg = _avg(peer_ev)
                 if my_avg is not None and peer_avg is not None:
                     combined = round((my_avg + peer_avg) / 2, 2)
+        show_rate = user.role == UserRole.site_chief
+        t_min, t_max = (
+            bounds_from_index(
+                grid_index, (asg.position_fact if asg else None) or emp.position_1c, emp.citizenship
+            )
+            if show_rate
+            else (None, None)
+        )
         items.append(
             AssignmentListItem(
                 assignment_id=ev.assignment_id or 0,
@@ -338,8 +450,12 @@ def my_assignments(user: User = Depends(get_current_user), db: Session = Depends
                 assignment_version=asg.version if asg else 1,
                 is_urgent=bool(ev.urgent_request_id),
                 urgent_request_id=ev.urgent_request_id,
-                hourly_rate=emp.hourly_rate,
-                rate_updated_at=emp.rate_updated_at,
+                hourly_rate=emp.hourly_rate if show_rate else None,
+                rate_updated_at=emp.rate_updated_at if show_rate else None,
+                rate_last_raised=emp.rate_last_raised if show_rate else None,
+                is_rate_expired=is_rate_expired(emp.rate_last_raised) if show_rate else False,
+                tariff_min=t_min if show_rate else None,
+                tariff_max=t_max if show_rate else None,
                 combined_score=combined,
                 peer_submitted=peer_submitted,
             )
@@ -408,22 +524,10 @@ def save_assignment_evaluation(
         raise HTTPException(status_code=403, detail="Нет доступа к этой анкете")
 
     if body.assignment_version is not None and body.assignment_version != asg.version:
-        return EvaluationOut(
-            id=0,
-            employee_id=asg.employee_id,
-            assignment_id=asg.id,
-            urgent_request_id=None,
-            status=EvaluationStatus.draft,
-            score_quality=body.score_quality,
-            score_discipline=body.score_discipline,
-            score_safety=body.score_safety,
-            score_skills=body.score_skills,
-            score_versatility=body.score_versatility,
-            avg_score=None,
-            comment=body.comment,
-            submitted_at=None,
-            conflict=True,
-            conflict_message=(
+        # 409 Conflict вместо 200 OK — предотвращает silent overwrite чужой работы
+        raise HTTPException(
+            status_code=409,
+            detail=(
                 f"Назначение изменено Администрацией (версия {asg.version}). "
                 "Перезаполните анкету или отмените черновик."
             ),
@@ -458,6 +562,9 @@ def save_assignment_evaluation(
         .order_by(Evaluation.id.desc())
         .first()
     )
+    # F04 FIX: запрещаем любое изменение отправленной анкеты обычным путём
+    if ev and ev.status == EvaluationStatus.submitted and not submit:
+        raise HTTPException(status_code=403, detail="Отправленную анкету нельзя изменить")
     if ev and ev.status == EvaluationStatus.submitted and submit:
         raise HTTPException(status_code=400, detail="Анкета уже отправлена")
 
@@ -517,7 +624,7 @@ def save_assignment_evaluation(
 
     if submit:
         ev.status = EvaluationStatus.submitted
-        ev.submitted_at = datetime.utcnow()
+        ev.submitted_at = datetime.now(timezone.utc).replace(tzinfo=None)
         emit_event(
             db,
             organization_id=user.organization_id,
@@ -549,6 +656,44 @@ def save_assignment_evaluation(
     )
 
 
+@router.post("/assignments/{assignment_id}/discard-draft")
+def discard_draft(
+    assignment_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Отмена локального черновика после конфликта версий (событие draft_discarded_conflict)."""
+    asg = db.get(Assignment, assignment_id)
+    if not asg or asg.organization_id != user.organization_id:
+        raise HTTPException(status_code=404, detail="Назначение не найдено")
+    ev = (
+        db.query(Evaluation)
+        .filter(
+            Evaluation.assignment_id == asg.id,
+            Evaluation.evaluator_id == user.id,
+            Evaluation.status == EvaluationStatus.draft,
+        )
+        .order_by(Evaluation.id.desc())
+        .first()
+    )
+    if ev:
+        emit_event(
+            db,
+            organization_id=user.organization_id,
+            actor_user_id=user.id,
+            entity_type="evaluation",
+            entity_id=ev.id,
+            action="draft_discarded_conflict",
+            payload={
+                "assignment_id": asg.id,
+                "assignment_version": asg.version,
+            },
+        )
+        db.delete(ev)
+        db.commit()
+    return {"ok": True}
+
+
 @router.post("/urgent/{urgent_id}/evaluation", response_model=EvaluationOut)
 def save_urgent_evaluation(
     urgent_id: int,
@@ -563,7 +708,7 @@ def save_urgent_evaluation(
         .first()
     )
     ur = db.get(UrgentRequest, urgent_id)
-    if not link or not ur or ur.status != "open":
+    if not link or not ur or ur.status != UrgentStatus.open:
         raise HTTPException(status_code=404, detail="Срочная задача не найдена")
 
     ev = (
@@ -593,7 +738,7 @@ def save_urgent_evaluation(
         ev.client_mutation_id = body.client_mutation_id
     if submit:
         ev.status = EvaluationStatus.submitted
-        ev.submitted_at = datetime.utcnow()
+        ev.submitted_at = datetime.now(timezone.utc).replace(tzinfo=None)
         link_evaluation_to_period_assignment(db, ev)
         close_urgent_if_complete(db, ur, actor_user_id=user.id)
         emit_event(
@@ -647,7 +792,7 @@ def create_ticket(
         assignment_id=body.assignment_id,
         employee_id=body.employee_id,
         message=body.message.strip(),
-        status="new",
+        status=TicketStatus.new,
     )
     db.add(ticket)
     db.flush()
@@ -730,26 +875,24 @@ def site_overview(user: User = Depends(get_current_user), db: Session = Depends(
     submitted_keys = {(e.assignment_id, e.evaluator_id) for e in submitted_evs}
     started = min((e.submitted_at for e in submitted_evs if e.submitted_at), default=None)
 
-    # Прогресс по каждому прорабу/мастеру участка (с учётом заместителей)
+    # Прогресс по каждому прорабу/мастеру участка (с учётом заместителей).
+    # Замещения загружаются одним запросом на период — без N+1 в цикле.
+    covering_map_period = covering_map(
+        db, organization_id=user.organization_id, period_id=period.id
+    )
     per_master: dict[int, dict] = {}
     for a in assignments:
         if not a.primary_user_id:
             continue
         slot = per_master.setdefault(a.primary_user_id, {"total": 0, "submitted": 0})
         slot["total"] += 1
-        primary_ids = covering_evaluator_ids(
-            db,
-            organization_id=user.organization_id,
-            period_id=period.id,
-            original_user_id=a.primary_user_id,
+        primary_ids = (
+            covering_map_period.get(a.primary_user_id, set()) | {a.primary_user_id}
+            if a.primary_user_id
+            else set()
         )
         secondary_ids = (
-            covering_evaluator_ids(
-                db,
-                organization_id=user.organization_id,
-                period_id=period.id,
-                original_user_id=a.secondary_user_id,
-            )
+            covering_map_period.get(a.secondary_user_id, set()) | {a.secondary_user_id}
             if a.dual_enabled and a.secondary_user_id
             else set()
         )

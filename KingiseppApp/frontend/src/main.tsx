@@ -10,14 +10,32 @@ import {
   getApiBase,
   getToken,
   setApiBase,
+  setRequirePasswordChangeHandler,
   type SessionUser,
 } from "./api";
 import { FieldApp } from "./FieldApp";
 import { AdminApp } from "./AdminApp";
+import { EconomistApp } from "./EconomistApp";
 import { RegistryApp } from "./RegistryApp";
 import { InstallBanner } from "./InstallBanner";
+import { ChangePasswordModal } from "./ChangePasswordModal";
+import { LoginScreen } from "./LoginScreen";
+import { PasswordSetupScreen } from "./PasswordSetupScreen";
+import { ManagementApp } from "./ManagementApp";
 
 const isNative = Capacitor.isNativePlatform();
+
+// Типы для ролей
+type AppRole = SessionUser["role"] | "management_op" | "cok_okit" | "cok_adapt" | "cok_otiz";
+
+interface CtrlUserPayload {
+  id: number;
+  tab_no: string;
+  fio: string;
+  role: string;
+  organization_id: number;
+  must_change_password?: boolean;
+}
 
 function App() {
   const [user, setUser] = useState<SessionUser | null>(null);
@@ -30,6 +48,15 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [view, setView] = useState<"home" | "registry">("home");
+  const [showChangePwd, setShowChangePwd] = useState(false);
+
+  // Состояние "Контроль" входа
+  const [ctrlPendingUser, setCtrlPendingUser] = useState<CtrlUserPayload | null>(null);
+
+  useEffect(() => {
+    setRequirePasswordChangeHandler(() => setShowChangePwd(true));
+    return () => setRequirePasswordChangeHandler(null);
+  }, []);
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -43,7 +70,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // SW только в браузере; в APK ассеты локальные
     if (!isNative && "serviceWorker" in navigator) {
       navigator.serviceWorker.register("./sw.js").catch(() => undefined);
     }
@@ -56,7 +82,19 @@ function App() {
       try {
         const me = await apiMe();
         setUser(me);
-      } catch {
+        if (me.must_change_password) setShowChangePwd(true);
+      } catch (e) {
+        const err = e as { requirePasswordChange?: boolean };
+        if (err?.requirePasswordChange) {
+          const raw = localStorage.getItem("kingisepp_user");
+          if (raw) {
+            try {
+              setUser(JSON.parse(raw));
+              setShowChangePwd(true);
+              return;
+            } catch { /* ignore */ }
+          }
+        }
         clearSession();
       }
     })();
@@ -96,6 +134,7 @@ function App() {
       const session = await apiLogin(tabNo.trim(), password);
       setUser(session);
       setView("home");
+      if (session.must_change_password) setShowChangePwd(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Неверный логин или пароль");
     } finally {
@@ -107,104 +146,108 @@ function App() {
     clearSession();
     setUser(null);
     setView("home");
+    setShowChangePwd(false);
+    setCtrlPendingUser(null);
+  }
+
+  // Обработчик успешного входа из "Контроль"
+  function onCtrlLogin(token: string, ctrlUser: CtrlUserPayload) {
+    if (token) {
+      // Обычный вход — токен получен
+      setUser({
+        id: ctrlUser.id,
+        tab_no: ctrlUser.tab_no,
+        fio: ctrlUser.fio,
+        role: ctrlUser.role as AppRole,
+        organization_id: ctrlUser.organization_id,
+        must_change_password: ctrlUser.must_change_password ?? false,
+      });
+    } else {
+      // Первый вход — нужен setup пароля
+      setCtrlPendingUser(ctrlUser);
+    }
+  }
+
+  // После установки пароля — автоматический вход
+  function onPasswordSetupDone(token: string, setupUser: any) {
+    setUser({
+      id: setupUser.id,
+      tab_no: setupUser.tab_no,
+      fio: setupUser.fio,
+      role: setupUser.role as AppRole,
+      organization_id: setupUser.organization_id,
+      must_change_password: false,
+    });
+    setCtrlPendingUser(null);
+  }
+
+  if (showChangePwd && user) {
+    return (
+      <ChangePasswordModal
+        onSuccess={(u) => {
+          setUser(u);
+          setShowChangePwd(false);
+        }}
+        onLogout={logout}
+      />
+    );
+  }
+
+  // Страница создания пароля (первый вход "Контроль")
+  if (ctrlPendingUser) {
+    return (
+      <PasswordSetupScreen
+        user={ctrlPendingUser}
+        onSuccess={onPasswordSetupDone}
+        onLogout={logout}
+      />
+    );
   }
 
   if (!user) {
     return (
-      <div className="page login">
+      <>
         {!isNative && <InstallBanner />}
-        <header className="hero-card" style={{ marginBottom: "1rem" }}>
-          <p className="muted" style={{ margin: 0 }}>
-            ВелесстройМонтаж · ОП Кингисепп{isNative ? " · Android" : ""}
-          </p>
-          <h1>Отдел мобилизации и координации</h1>
-          <p className="muted">
-            {isNative
-              ? "В приложении укажите адрес сервера (из tunnel.bat), затем войдите табельным номером."
-              : "Войдите табельным номером. С телефона — тот же вход."}
-          </p>
-        </header>
-
-        <div className="login-banner" aria-hidden>
-          <img src="./brand/logo-banner.png" alt="" />
-        </div>
-
-        {(showServer || isNative) && (
-          <section className="panel" style={{ marginBottom: "0.85rem" }}>
-            <h2>Адрес сервера</h2>
-            <p className="muted">
-              Вставьте ссылку из окна туннеля, например https://xxxx.trycloudflare.com — без слэша в конце.
-            </p>
-            <label>
-              URL сервера
-              <input
-                value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
-                placeholder="https://….trycloudflare.com"
-                inputMode="url"
-                autoCapitalize="none"
-                autoCorrect="off"
-              />
-            </label>
-            <button type="button" className="primary" disabled={busy} onClick={checkServer} style={{ width: "100%" }}>
-              {busy ? "Проверка…" : "Проверить и сохранить"}
-            </button>
-            {info && <p className="ok-text">{info}</p>}
-          </section>
-        )}
-
-        <form onSubmit={onLogin} className="panel">
-          {!isNative && (
-            <button className="link" type="button" onClick={() => setShowServer((v) => !v)}>
-              {showServer ? "Скрыть адрес сервера" : "Другой сервер (туннель)…"}
-            </button>
-          )}
-          <label>
-            Табельный номер
-            <input
-              value={tabNo}
-              onChange={(e) => setTabNo(e.target.value)}
-              autoComplete="username"
-              placeholder="например ВМ-0140784"
-              required
-            />
-          </label>
-          <label>
-            Пароль
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </label>
-          {error && <p className="error">{error}</p>}
-          <button disabled={busy} type="submit" className="primary" style={{ width: "100%", minHeight: 48 }}>
-            {busy ? "Входим…" : "Войти"}
-          </button>
-        </form>
-
-        <div className="login-roles">
-          <div className="login-role">
-            <b>Мастер / прораб</b>
-            Свой табельный → список людей → оценка → «Отправить».
-          </div>
-          <div className="login-role">
-            <b>Отдел мобилизации (ADMIN-OP)</b>
-            Назначения, срочные, база, загрузка Excel, реестр.
-          </div>
-        </div>
-      </div>
+        <LoginScreen onLogin={onCtrlLogin} />
+      </>
     );
   }
 
   const isAdmin = user.role === "admin" || user.role === "admin_op";
   const isChief = user.role === "site_chief";
   const isField = user.role === "master" || user.role === "foreman";
+  const isEconomist = user.role === "economist";
+  const isManagement = user.role === "management_op";
+  const isCok = ["cok_okit", "cok_adapt", "cok_otiz"].includes(user.role);
 
+  // Экономист
+  if (isEconomist) {
+    return <EconomistApp user={user} onLogout={logout} />;
+  }
+
+  // Руководитель ОП
+  if (isManagement) {
+    return <ManagementApp user={user} onLogout={logout} />;
+  }
+
+  // ЦОК
+  if (isCok) {
+    return (
+      <div className="page">
+        <header className="app-header">
+          <span>👤 {user.fio}</span>
+          <button type="button" onClick={logout}>Выйти</button>
+        </header>
+        <main className="app-main">
+          <h2>ЦОК — {user.role}</h2>
+          <p className="muted">Кабинет в разработке. Права определяются ролью ЦОК.</p>
+        </main>
+      </div>
+    );
+  }
+
+  // Начальник участка
   if (isChief) {
-    // ЛК начальника участка = ЛК прораба/мастера + сводка участка; реестр — по кнопке
     if (view === "registry") {
       return <RegistryApp user={user} onLogout={logout} onBack={() => setView("home")} />;
     }
@@ -218,14 +261,15 @@ function App() {
     );
   }
 
-  if (isAdmin && view === "registry") {
-    return <RegistryApp user={user} onLogout={logout} onBack={() => setView("home")} />;
-  }
-
+  // Администратор
   if (isAdmin) {
+    if (view === "registry") {
+      return <RegistryApp user={user} onLogout={logout} onBack={() => setView("home")} />;
+    }
     return <AdminApp user={user} onLogout={logout} onOpenRegistry={() => setView("registry")} />;
   }
 
+  // Полевые роли (мастер/прораб)
   if (isField) {
     return <FieldApp user={user} online={online} onLogout={logout} />;
   }
@@ -233,9 +277,7 @@ function App() {
   return (
     <div className="page">
       <p className="error">Для вашей роли интерфейс пока не открыт.</p>
-      <button type="button" onClick={logout}>
-        Выйти
-      </button>
+      <button type="button" onClick={logout}>Выйти</button>
     </div>
   );
 }

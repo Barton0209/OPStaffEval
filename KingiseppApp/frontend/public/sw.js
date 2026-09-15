@@ -31,9 +31,19 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     fetch(event.request)
       .then((res) => {
-        const copy = res.clone();
+        // Добавляем security headers в ответ SW
+        const headers = new Headers(res.headers);
+        headers.set("X-Content-Type-Options", "nosniff");
+        headers.set("X-Frame-Options", "DENY");
+        headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+        const enhancedRes = new Response(res.body, {
+          status: res.status,
+          statusText: res.statusText,
+          headers,
+        });
+        const copy = enhancedRes.clone();
         caches.open(CACHE).then((c) => c.put(event.request, copy));
-        return res;
+        return enhancedRes;
       })
       .catch(() => caches.match(event.request)),
   );

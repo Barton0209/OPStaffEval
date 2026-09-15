@@ -1,0 +1,490 @@
+﻿<!DOCTYPE HTML>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <style>
+        body {
+            padding-right: 0px;
+            padding-left: 0px;
+            font-size: 12pt;
+            background: #ffffff;
+            padding-bottom: 12pt;
+            margin: 0px;
+            color: #000000;
+            padding-top: 0px;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        .banner {
+            padding-right: 0px;
+            padding-left: 5px;
+            font-weight: bold;
+            font-size: 10pt;
+            padding-bottom: 6pt;
+            width: 100%;
+            padding-top: 6pt;
+            background-color: #68217A;
+            text-align: left;
+        }
+
+        .style1 {
+            font-family: Arial;
+        }
+
+        table, th, td {
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <div class="banner"><a name="top">Microsoft Visual Studio 2022</a></div>
+    <h1>ligne de commande Visual Studio</h1>
+    <h2>Utilisation : vs_enterprise.exe [command [options]]</h2>
+    <h3>(Remplacez vs_enterprise.exe le cas échéant pour l’édition de produit que vous installez.)</h3>
+    <div>
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Commande en ligne de commande</strong></th>
+                    <th><strong>Description</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>(blank)</code></td>
+                    <td>
+                        Installe le produit.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>modify</code></td>
+                    <td>
+                        Modifie un produit installé.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>update</code></td>
+                    <td>
+                        Met à jour un produit installé.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>repair</code></td>
+                    <td>
+                        Répare un produit installé.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>resume</code></td>
+                    <td>
+                        Reprend l'installation.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>export</code></td>
+                    <td>
+                        Exporte un fichier de configuration d'installation.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>modifySettings</code></td>
+                    <td>
+                        Modifie les paramètres d’une installation existante.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>removeChannel</code></td>
+                    <td>
+                        Supprime un canal.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>updateAll</code></td>
+                    <td>
+                        Met à jour toutes les installations applicables.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>uninstall</code></td>
+                    <td>
+                        Désinstalle un produit installé.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>installer l’option de ligne de commande</strong></th>
+                    <th><strong>Description</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--installPath &lt;dir&gt;</code></td>
+                    <td>Répertoire d’installation sur lequel l’instance doit agir
+                        Pour la commande d’installation, cette option est facultative et correspond à l’emplacement d’installation de l’instance.
+                        Pour les autres commandes, ceci est obligatoire et correspond à l’emplacement où l’instance précédemment installée a été installée.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--addProductLang &lt;language-locale&gt;</code></td>
+                    <td>Lors d'une opération d'installation ou de modification, cette option détermine les packs linguistiques de l'interface utilisateur qui sont installés sur le produit.
+                         Il peut apparaître plusieurs fois sur la ligne de commande pour ajouter plusieurs packs linguistiques. Si elle n'est pas présente, l'installation utilise la locale de la machine.
+                         Vous trouverez ci-dessous une liste complète des paramètres linguistiques pris en charge.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--removeProductLang &lt;language-locale&gt;</code></td>
+                    <td>Au cours d’une opération d’installation ou de modification, cela détermine les modules linguistiques de l’interface utilisateur qui doivent être supprimés du produit.
+                        Il peut apparaître plusieurs fois sur la ligne de commande pour ajouter plusieurs modules linguistiques.
+                        Consultez la liste complète des paramètres régionaux de langue pris en charge ci-dessous.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--ajouter &lt;un ou plusieurs ID de charge de travail ou de composant&gt;</code></td>
+                    <td>Un ou plusieurs ID de charge de travail ou de composant à ajouter.
+                        Les composants requis de l’artefact sont installés, mais pas les composants recommandés ou facultatifs. 
+                        Vous pouvez contrôler des composants supplémentaires globalement à l’aide de <code>--includeRecommended</code> et/ou <code>--includeOptional</code>. 
+                        Pour inclure plusieurs charges de travail ou composants, répétez la commande <code>--add</code> (par exemple, <code>--add Workload1 --add Workload2</code>).
+                        Pour un contrôle plus fin, vous pouvez ajouter l'option<code>;includeRecommended</code> or <code>;includeOptional</code> à l’ID 
+                        (par exemple, <code>--ajouter Workload1;includeRecommended</code> or <code>--add Workload2;includeRecommended;includeOptional</code>). 
+                        Vous pouvez répéter cette option si nécessaire.</td>
+                </tr>
+                <tr>
+                    <td><code>--supprimer&lt;un ou plusieurs ID de charge de travail ou de composant&gt;</code></td>
+                    <td>Un ou plusieurs ID de charge de travail ou de composant à supprimer</td>
+                </tr>
+                <tr>
+                    <td><code>--in &lt;path&gt;</code></td>
+                    <td>URI ou chemin d’accès à un fichier réponse</td>
+                </tr>
+                <tr>
+                    <td><code>--all</code></td>
+                    <td>Indique s’il faut installer toutes les charges de travail et tous les composants d’un produit.</td>
+                </tr>
+                <tr>
+                    <td><code>--allWorkloads</code></td>
+                    <td>Installe l’ensemble des charges de travail et composants, pas de composants recommandés ou facultatifs.</td>
+                </tr>
+                <tr>
+                    <td><code>--includeRecommended</code></td>
+                    <td>Inclut les composants recommandés des charges de travail installées, mais pas les composants facultatifs. 
+                        Les charges de travail sont spécifiées avec <code>--allWorkloads</code> ou <code>--add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeOptional</code></td>
+                    <td>Inclut les composants facultatifs des charges de travail installées, mais pas les composants recommandés. 
+                        Les charges de travail sont spécifiées avec <code>--allWorkloads</code> ou <code>--add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--quiet, -q</code></td>
+                    <td>N’affichez aucune interface utilisateur lors de l’installation.</td>
+                </tr>
+                <tr>
+                    <td><code>--passive, -p</code></td>
+                    <td>Affichez l’interface utilisateur, mais ne demandez aucune interaction de la part de l’utilisateur.</td>
+                </tr>
+                <tr>
+                    <td><code>--norestart</code></td>
+                    <td>Si présent, les commandes avec <code>--passive</code> ou <code>---quiet</code> 
+                        ne redémarrera pas automatiquement la machine (si nécessaire). 
+                        Ceci est ignoré si ni <code>--passive</code> ni <code>--quiet</code> ne sont spécifiées.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--nickname &lt;name&gt;</code></td>
+                    <td>Définit le surnom à attribuer à un produit installé. 
+                        Le surnom ne peut pas dépasser 10 caractères.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--productKey &lt;key&gt;</code></td>
+                    <td>Ceci définit la clé de produit à utiliser pour un produit installé. 
+                        Il est composé de 25 caractères alphanumériques au format <code>xxxxx-xxxxx-xxxxx-xxxxx-xxxxx</code> ou <code>xxxxxxxxxxxxxxxxxxxxxxxxx</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--config &lt;fullpath&gt;</code></td>
+                    <td>Au cours d’une opération d’installation ou de modification, cela détermine les charges de travail et les composants à ajouter 
+                        basé sur un fichier de configuration d’installation précédemment enregistré. Cette opération est additive et ne supprimera aucune charge de travail ou composant 
+                        s’ils ne sont pas présents dans le fichier. De plus, les éléments qui ne s’appliquent pas au produit ne seront pas ajoutés. Au cours d’une opération d’exportation, 
+                        détermine l’emplacement d’enregistrement du fichier de configuration d’installation.
+                        Il doit s’agir d’un chemin d’accès absolu.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--help, --?, -h, -?</code></td>
+                    <td>Afficher l’utilisation des paramètres</td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>de l’option de ligne de commande de disposition</strong></th>
+                    <th><strong>Description</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--layout &lt;dir&gt;</code></td>
+                    <td>Spécifie un répertoire pour créer un cache d’installation hors connexion.</td>
+                </tr>
+                <tr>
+                    <td><code>--lang &lt;une ou plusieurs&gt;</code> de paramètres régionaux de langue</td>
+                    <td>Utilisé avec <code>--layout</code> pour préparer un cache d’installation hors connexion avec des packages de ressources avec la ou les langues spécifiées. 
+                        Consultez la liste complète des paramètres régionaux de langue pris en charge ci-dessous.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--ajouter &lt;un ou plusieurs ID de charge de travail ou de composant&gt;</code></td>
+                    <td>Un ou plusieurs ID de charge de travail ou de composant à ajouter. Les composants requis de l’artefact sont installés, mais pas les composants recommandés ou facultatifs. 
+                        Vous pouvez contrôler des composants supplémentaires globalement à l’aide de <code>--includeRecommended</code> et/ou <code>--includeOptional</code>. 
+                        Pour un contrôle plus fin, vous pouvez ajouter <code>;includeRecommended</code> ou <code>;includeOptional</code> à l’ID 
+                        (par exemple, <code>--add Workload1;includeRecommended</code> ou <code>--add Workload2;includeOptional</code>). 
+                        <br>Remarque : si <code>--ajouter</code> est utilisé, seules les charges de travail et composants spécifiés et leurs dépendances sont téléchargées. 
+                        Si <code>--ajouter</code> n’est pas spécifié, toutes les charges de travail et tous les composants sont téléchargés dans la disposition.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeRecommended</code></td>
+                    <td>Inclut les composants recommandés des charges de travail installées, mais pas les composants facultatifs. 
+                        Les charges de travail sont spécifiées avec <code>--allWorkloads</code> ou <code>--add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeOptional</code></td>
+                    <td>Inclut les <em>et les</em> composants facultatifs recommandés pour les charges de travail incluses dans la disposition. 
+                        Les charges de travail sont spécifiées avec <code>--add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--keepLayoutVersion</code></td>
+                    <td>Appliquer les modifications à la disposition sans mettre à jour la version de la disposition</td>
+                </tr>
+                <tr>
+                    <td><code>--verify</code></td>
+                    <td>Vérifiez le contenu d’une disposition. Tous les fichiers endommagés ou manquants sont répertoriés.</td>
+                </tr>
+                <tr>
+                    <td><code>--fix</code></td>
+                    <td>Vérifiez le contenu d’une disposition. 
+                        Si des fichiers sont endommagés ou manquants, ils sont rechargés. 
+                        L’accès à Internet est nécessaire pour corriger une disposition.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--clean &lt;un ou plusieurs chemins d’accès aux catalogues&gt;</code></td>
+                    <td>Supprime les anciennes versions des composants d’une disposition qui a été mise à jour vers une version plus récente.</td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>de l’option de ligne de commande avancée</strong></th>
+                    <th><strong>Description</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--channelId &lt;id&gt;</code></td>
+                    <td>ID du canal pour l’instance à installer. 
+                        Ceci est requis pour la commande install, ignoré pour les autres commandes si <code>--installPath</code> est spécifié.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--channelUri &lt;uri&gt;</code></td>
+                    <td>URI du manifeste du canal. Si des mises à jour ne sont pas souhaitées, <code>--channelUri</code> peut pointer vers un fichier inexistant. 
+                        (par exemple, --channelUri C:\doesntExist.chman) Peut être utilisé pour la commande d’installation; elle est ignorée pour d’autres commandes.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--installChannelUri &lt;uri&gt;</code></td>
+                    <td>URI du manifeste de canal à utiliser pour l’installation. URI spécifié par <code>--channelUri</code> 
+                        (qui doit être spécifié lorsque <code>--installChannelUri</code> est spécifié) est utilisé pour détecter les mises à jour.
+                         Peut être utilisé pour la commande d’installation; elle est ignorée pour d’autres commandes.
+                        </td>
+                </tr>
+                <tr>
+                    <td><code>--installCatalogUri &lt;uri&gt;</code></td>
+                    <td>URI du manifeste du catalogue à utiliser pour l’installation. 
+                        Si ce paramètre est spécifié, le gestionnaire de canal tente de télécharger le manifeste du catalogue à partir de cet URI avant d’utiliser l’URI dans le manifeste du canal d’installation. 
+                        Ce paramètre est utilisé pour prendre en charge l’installation hors connexion, où le cache de disposition sera créé avec le catalogue de produits déjà téléchargé. 
+                        Peut être utilisé pour la commande d’installation; elle est ignorée pour d’autres commandes.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--productId &lt;id&gt;</code></td>
+                    <td>ID du produit pour l’instance qui sera installée. Ceci est prérempli dans des conditions d’installation normales.</td>
+                </tr>
+                <tr>
+                    <td><code>--newChannelUri &lt;uri&gt;</code></td>
+                    <td>Nouvel URI ou chemin du manifeste de canal à utiliser pour les mises à jour
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--layoutUri &lt;uri&gt;</code></td>
+                    <td>L'URI de mise en page hébergée sur le Web qui est utilisée pour récupérer les packages d'installation.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--thème &lt;theme&gt;</code></td>
+                    <td>Modifie le thème de couleur du programme d’installation. Les valeurs peuvent être Light/Dark/HighContrast.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--wait</code></td>
+                    <td>Le processus attendra la fin de l’installation avant de renvoyer un code de sortie. 
+                        Cela est utile lors de l’automatisation des installations dans lesquelles il faut attendre la fin de l’installation pour gérer le code de retour de cette installation.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--locale &lt;language-locale&gt;</code></td>
+                    <td>Modifiez la langue d’affichage de l’interface utilisateur pour le programme d’installation lui-même. Le paramètre sera conservé. 
+                        Consultez la liste complète des paramètres régionaux de langue pris en charge ci-dessous.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--cache</code></td>
+                    <td>Le cas échéant, les packages seront conservés après leur installation pour les réparations ultérieures. 
+                        Ce paramètre remplace le paramètre de stratégie globale à utiliser pour les installations, réparations ou modifications suivantes. 
+                        La stratégie par défaut consiste à mettre en cache les packages. Ceci est ignoré pour la commande de désinstallation.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--nocache</code></td>
+                    <td>Le cas échéant, les packages seront supprimés après avoir été installés ou réparés. 
+                        Ils seront téléchargés à nouveau uniquement si nécessaire et supprimés à nouveau après utilisation. 
+                        Ce paramètre remplace le paramètre de stratégie globale à utiliser pour les installations, réparations ou modifications suivantes. 
+                        La stratégie par défaut consiste à mettre en cache les packages.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--noUpdateInstaller</code></td>
+                    <td>Le cas échéant, empêche le programme d’installation de se mettre à jour quand quiet est spécifié. 
+                        Le programme d’installation va faire échouer la commande et retourner un code de sortie différent de zéro si noUpdateInstaller est spécifié avec quiet lorsqu’une mise à jour du programme d’installation est nécessaire.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--noWeb</code></td>
+                    <td>Le cas échéant, le programme d’installation Visual Studio utilise les fichiers de votre répertoire de disposition pour installer Visual Studio.
+                        Si un utilisateur tente d’installer des composants qui ne sont pas dans la disposition, l’installation échoue.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path &lt;name&gt;=&lt;path&gt;</code></td>
+                    <td>Permet de spécifier des chemins d’installation personnalisés pour l’installation. Les noms de chemin d’accès pris en charge sont partagés, mis en cache et installés.</td>
+                </tr>
+                <tr>
+                    <td><code>--path cache=&lt;path&gt;</code></td>
+                    <td>Utilise l’emplacement que vous spécifiez pour télécharger les fichiers d’installation. Cet emplacement ne peut être défini que la première fois que Visual Studio est installé. 
+                        Exemple : <code>--path cache="C:\VS\cache"</code>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path shared=&lt;path&gt;</code></td>
+                    <td>Contient des fichiers partagés pour les installations côte à côte Visual Studio. 
+                        Certains outils et SDK s’installent dans un emplacement sur ce lecteur, tandis que d’autres peuvent remplacer ce paramètre et les installer sur un autre lecteur. 
+                        Exemple : <code>--path shared="C:\VS\shared"</code> <br><br>Important : il ne peut être défini qu’une seule fois et lors de la première installation de Visual Studio.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path install=&lt;path&gt;</code></td>
+                    <td>Équivalent à <code>-installPath</code>. Plus précisément, <code>--installPath « C:\VS"</code> et <code>--path install="C:\VS"</code> sont équivalents. 
+                        Un seul de ces éléments peut être utilisé à la fois.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th>Language-locale</th>
+                    <th>Langage</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>cs-CZ</td>
+                    <td>Tchèque</td>
+                </tr>
+                <tr>
+                    <td>de-DE</td>
+                    <td>Allemand</td>
+                </tr>
+                <tr>
+                    <td>fr-FR</td>
+                    <td>Anglais</td>
+                </tr>
+                <tr>
+                    <td>es-ES</td>
+                    <td>Espagnol</td>
+                </tr>
+                <tr>
+                    <td>fr-FR</td>
+                    <td>Français</td>
+                </tr>
+                <tr>
+                    <td>it-IT</td>
+                    <td>Italien</td>
+                </tr>
+                <tr>
+                    <td>ja-JP</td>
+                    <td>Japonais</td>
+                </tr>
+                <tr>
+                    <td>ko-KR</td>
+                    <td>Coréen</td>
+                </tr>
+                <tr>
+                    <td>pl-PL</td>
+                    <td>Polonais</td>
+                </tr>
+                <tr>
+                    <td>pt-BR</td>
+                    <td>Portugais - Brésil</td>
+                </tr>
+                <tr>
+                    <td>ru-RU</td>
+                    <td>Russe</td>
+                </tr>
+                <tr>
+                    <td>tr-TR</td>
+                    <td>Turc</td>
+                </tr>
+                <tr>
+                    <td>zh-CN</td>
+                    <td>Chinois - simplifié</td>
+                </tr>
+                <tr>
+                    <td>zh-TW</td>
+                    <td>Chinois - traditionnel</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <p>
+        <br />
+        Pour obtenir des instructions détaillées, visitez
+        <span class="style1">
+            <a href="https://go.microsoft.com/fwlink/?LinkID=838246">https://go.microsoft.com/fwlink/?LinkID=838246</a>
+        </span>
+        <br />
+        <br />
+        Dernière modification : 25/05/2022
+    </p>
+    <p>&nbsp;</p>
+</body>
+</html>

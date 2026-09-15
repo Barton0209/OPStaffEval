@@ -1,0 +1,490 @@
+﻿<!DOCTYPE HTML>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <style>
+        body {
+            padding-right: 0px;
+            padding-left: 0px;
+            font-size: 12pt;
+            background: #ffffff;
+            padding-bottom: 12pt;
+            margin: 0px;
+            color: #000000;
+            padding-top: 0px;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        .banner {
+            padding-right: 0px;
+            padding-left: 5px;
+            font-weight: bold;
+            font-size: 10pt;
+            padding-bottom: 6pt;
+            width: 100%;
+            padding-top: 6pt;
+            background-color: #68217A;
+            text-align: left;
+        }
+
+        .style1 {
+            font-family: Arial;
+        }
+
+        table, th, td {
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <div class="banner"><a name="top">Microsoft Visual Studio 2022</a></div>
+    <h1>Wiersz polecenia programu Visual Studio</h1>
+    <h2>Sposób użycia: vs_enterprise.exe [command [options]]</h2>
+    <h3>(Zamień vs_enterprise.exe odpowiednio do instalowanej wersji produktu).</h3>
+    <div>
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Polecenie wiersza polecenia</strong></th>
+                    <th><strong>Opis</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>(puste)</code></td>
+                    <td>
+                        Instaluje produkt.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>modyfikuj</code></td>
+                    <td>
+                        Modyfikuje zainstalowany produkt.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>update</code></td>
+                    <td>
+                        Aktualizuje zainstalowany produkt.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>napraw</code></td>
+                    <td>
+                        Naprawia zainstalowany produkt.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>wznów</code></td>
+                    <td>
+                        Wznawia instalację.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>eksportuj</code></td>
+                    <td>
+                        Eksportuje plik konfiguracji instalacji.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>modifySettings</code></td>
+                    <td>
+                        Modyfikuje ustawienia istniejącej instalacji.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>removeChannel</code></td>
+                    <td>
+                        Usuwa kanał.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>updateAll</code></td>
+                    <td>
+                        Aktualizuje wszystkie odpowiednie instalacje.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>odinstaluj</code></td>
+                    <td>
+                        Odinstalowuje zainstalowany produkt.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Instaluj opcję wiersza polecenia</strong></th>
+                    <th><strong>Opis</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--installPath &lt;dir&gt;</code></td>
+                    <td>Katalog instalacyjny, na który ma działać wystąpienie.
+                        W przypadku polecenia install jest to opcjonalne rozwiązanie, w którym zostanie zainstalowane wystąpienie.
+                        W przypadku innych poleceń jest to wymagane i jest to miejsce, w którym zainstalowano wcześniej zainstalowane wystąpienie.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--addProductLang &lt;language-locale&gt;</code></td>
+                    <td>Podczas operacji instalowania lub modyfikowania określa pakiety językowe interfejsu użytkownika zainstalowane w produkcie.
+                        Może wielokrotnie pojawiać się w wierszu polecenia w celu dodania wielu pakietów językowych. Jeśli ich nie ma, instalacja używa ustawień regionalnych maszyny.
+                        Zobacz pełną listę obsługiwanych ustawień regionalnych języka poniżej.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--removeProductLang &lt;language-locale&gt;</code></td>
+                    <td>Podczas operacji instalowania lub modyfikowania określa pakiety językowe interfejsu użytkownika, które mają zostać usunięte z produktu.
+                        Może wielokrotnie pojawiać się w wierszu polecenia w celu dodania wielu pakietów językowych.
+                        Zobacz pełną listę obsługiwanych ustawień regionalnych języka poniżej.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--add &lt;one or more workload or component IDs&gt;</code></td>
+                    <td>Co najmniej jeden identyfikator obciążenia lub składnika do dodania.
+ Wymagane składniki artefaktu są zainstalowane, ale nie są to zalecane ani opcjonalne składniki.
+                        Możesz kontrolować dodatkowe składniki globalnie za pomocą <code>--includeRecommended</code> i/lub <code>--includeOptional</code>.
+                         Aby uwzględnić wiele obciążeń lub składników, powtórz polecenie <code>--add</code> (na przykład, <code>--add Workload1 --add Workload2</code>).
+                       Aby uzyskać bardziej szczegółową kontrolkę, możesz dołączyć <code>;includeRecommended</code> lub <code>;includeOptional</code> do identyfikatora 
+                         (na przykład <code>--add Workload1;includeRecommended</code> lub <code>--add Workload2;includeRecommended;includeOptional</code>). 
+                        Tę opcję można powtórzyć w razie potrzeby.</td>
+                </tr>
+                <tr>
+                    <td><code>--remove &lt;one or more workload or component IDs&gt;</code></td>
+                    <td>Co najmniej jeden identyfikator obciążenia lub składnika do usunięcia.</td>
+                </tr>
+                <tr>
+                    <td><code> --in &lt;path&gt;</code></td>
+                    <td>Identyfikator URI lub ścieżka do pliku odpowiedzi.</td>
+                </tr>
+                <tr>
+                    <td><code>--all</code></td>
+                    <td>Określa, czy zainstalować wszystkie obciążenia i składniki dla produktu.</td>
+                </tr>
+                <tr>
+                    <td><code>-- allWorkloads</code></td>
+                    <td>Instaluje wszystkie obciążenia i składniki bez zalecanych ani opcjonalnych składników.</td>
+                </tr>
+                <tr>
+                    <td><code>--includeRecommended</code></td>
+                    <td>Zawiera składniki zalecane dla wszystkich zainstalowanych obciążeń, ale nie składniki opcjonalne. 
+                        Obciążenia są określone za pomocą <code>-- allWorkloads</code> lub <code>-- add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeOptional</code></td>
+                    <td>Zawiera składniki opcjonalne dla wszystkich zainstalowanych obciążeń, ale nie zalecanych składników. 
+                        Obciążenia są określone za pomocą <code> -- allWorkloads</code> lub <code>-- add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--quiet, -q</code></td>
+                    <td>Nie wyświetlaj żadnego interfejsu użytkownika podczas instalacji.</td>
+                </tr>
+                <tr>
+                    <td><code>--passive, -p</code></td>
+                    <td>Wyświetl interfejs użytkownika, ale nie żądaj żadnej interakcji od użytkownika.</td>
+                </tr>
+                <tr>
+                    <td><code>--norestart</code></td>
+                    <td>Jeśli są obecne, polecenia z <code>--passive</code> lub <code>--quiet</code> 
+                        nie spowodują automatycznego ponownego uruchomienia komputera (jeśli to konieczne). 
+                        Jest to ignorowane, jeśli nie określono <code>--passive</code> ani <code>--quiet</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--nickname &lt;name&gt;</code></td>
+                    <td>Definiuje nick do przypisania do zainstalowanego produktu. 
+                        Nick nie może być dłuższy niż 10 znaków.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--productKey &lt;key&gt;</code></td>
+                    <td>Definiuje klucz produktu, który ma być używany dla zainstalowanego produktu. 
+                        Składa się z 25 znaków alfanumerycznych w formacie <code>xxxxx-xxxxx-xxxxx-xxxxx-xxxxx</code> lub <code>xxxxxxxxxxxxxxxxxxxxxxxxx</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--config &lt;fullpath&gt;</code></td>
+                    <td>Określa obciążenia i składniki do dodania podczas operacji instalacji lub modyfikacji 
+                        na podstawie zapisanego wcześniej pliku konfiguracji instalacji. Ta operacja jest addytywna i nie spowoduje usunięcia żadnego obciążenia ani składnika 
+                        jeśli nie znajdują się w pliku. Ponadto elementy, które nie mają zastosowania do produktu, nie zostaną dodane. Podczas operacji eksportowania 
+                        określa lokalizację do zapisania pliku konfiguracji instalacji.
+                        To musi być ścieżka bezwzględna.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--help, --?, -h, -?</code></td>
+                    <td>Wyświetl użycie parametru.</td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Opcja wiersza polecenia układu</strong></th>
+                    <th><strong>Opis</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--layout &lt;dir&gt;</code></td>
+                    <td>Określa katalog do utworzenia pamięci podręcznej instalacji w trybie offline.</td>
+                </tr>
+                <tr>
+                    <td><code>--lang &lt;one or more language-locales&gt;</code></td>
+                    <td>Używane z <code>--layout</code> w celu przygotowania pamięci podręcznej instalacji w trybie offline z pakietami zasobów o określonych językach. 
+                        Zobacz pełną listę obsługiwanych ustawień regionalnych języka poniżej.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--add &lt;one or more workload or component IDs&gt;</code></td>
+                    <td>Co najmniej jeden identyfikator obciążenia lub składnika do dodania. Wymagane składniki artefaktu są zainstalowane, ale nie są to zalecane ani opcjonalne składniki. 
+                        Możesz kontrolować dodatkowe składniki globalnie za pomocą <code>--includeRecommended</code> i/lub <code>--includeOptional</code>. 
+                        Aby uzyskać bardziej szczegółową kontrolkę, możesz dołączyć <code>;includeRecommended</code> lub <code>;includeOptional</code> do identyfikatora 
+                        (na przykład <code>--add Workload1;includeRecommended</code> lub <code>--add Workload2;includeOptional</code>). 
+                        <br>Uwaga: w przypadku gdy używa się <code>--add</code>, pobierane są tylko określone obciążenia i składniki oraz ich zależności. 
+                        Jeśli nie określono <code>--add</code>, wszystkie obciążenia i składniki są pobierane do układu.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeRecommended</code></td>
+                    <td>Zawiera składniki zalecane dla wszystkich zainstalowanych obciążeń, ale nie składniki opcjonalne. 
+                        Obciążenia są określone za pomocą <code>--allWorkloads</code> lub <code>-- add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeOptional</code></td>
+                    <td>Obejmuje zalecane <em>i</em> opcjonalne składniki dla wszystkich obciążeń uwzględnionych w układzie. 
+                        Obciążenia są określone za pomocą <code>--add</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code> --keepLayoutVersion</code></td>
+                    <td>Zastosuj zmiany do układu bez aktualizowania wersji układu.</td>
+                </tr>
+                <tr>
+                    <td><code>--verify</code></td>
+                    <td>Sprawdź zawartość układu. Wyświetlane są wszystkie uszkodzone lub brakujące pliki.</td>
+                </tr>
+                <tr>
+                    <td><code>--fix</code></td>
+                    <td>Sprawdź zawartość układu. 
+                        Jeśli jakieś pliki są uszkodzone lub ich brakuje, zostaną one załadowane ponownie. 
+                        Aby naprawić układ, wymagany jest dostęp do Internetu.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--clean &lt;one or more paths to catalogs&gt;</code></td>
+                    <td>Usuwa stare wersje składników z układu, który został zaktualizowany do nowszej wersji.</td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Zaawansowana opcja wiersza polecenia</strong></th>
+                    <th><strong>Opis</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--channelId &lt;id&gt;</code></td>
+                    <td>Identyfikator kanału do zainstalowania wystąpienia. 
+                        Jest to wymagane dla polecenia install, ignorowane dla innych poleceń, jeśli określono <code>--installPath</code>.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--channelUri &lt;uri&gt;</code></td>
+                    <td>Identyfikator URI manifestu kanału. Jeśli aktualizacje nie są wymagane, <code>--channelUri</code> może wskazywać nieistniejący plik. 
+                        (na przykład --channelUri C:\doesntExist.chman) Tego elementu można użyć dla polecenia install; jest ignorowany w przypadku innych poleceń.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--installChannelUri &lt;uri&gt;</code></td>
+                    <td>Identyfikator URI manifestu kanału do użycia na potrzeby instalacji. Identyfikator URI określony przez <code>--channelUri</code> 
+                        (który musi być określony, gdy <code>--installChannelUri</code> jest określony) służy do wykrywania aktualizacji.
+                         Tego elementu można użyć dla polecenia install; jest ignorowane w przypadku innych poleceń.
+                        </td>
+                </tr>
+                <tr>
+                    <td><code>--installCatalogUri &lt;uri&gt;</code></td>
+                    <td>Identyfikator URI manifestu wykazu do użycia na potrzeby instalacji. 
+                        Jeśli ta opcja jest określona, menedżer kanałów próbuje pobrać manifest wykazu z tego identyfikatora URI przed użyciem identyfikatora URI w manifeście kanału instalacyjnego. 
+                        Ten parametr jest używany do obsługi instalacji w trybie offline, gdzie pamięć podręczna układu zostanie utworzona z już pobranym wykazem produktów. 
+                        Tego elementu można użyć dla polecenia install; jest ignorowane w przypadku innych poleceń.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--productId &lt;id&gt;</code></td>
+                    <td>Identyfikator produktu dla wystąpienia, które zostanie zainstalowane. Ten element jest wstępnie wypełniony w normalnych warunkach instalacji.</td>
+                </tr>
+                <tr>
+                    <td><code>--newChannelUri &lt;uri&gt;</code></td>
+                    <td>Nowy identyfikator URI lub ścieżka do manifestu kanału do użycia na potrzeby aktualizacji.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--layoutUri &lt;uri&gt;</code></td>
+                    <td>Identyfikator URI układu hostowanego w sieci Web, który jest używany do pobierania pakietów instalacyjnych.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--theme &lt;theme&gt;</code></td>
+                    <td>Zmienia motyw kolorów instalatora. Wartości mogą być jasne/ciemne/o wysokim kontraście.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--wait</code></td>
+                    <td>Proces będzie czekać do zakończenia instalacji przed zwróceniem kodu zakończenia. 
+                        Jest to przydatne w przypadku automatyzowania instalacji, w których trzeba czekać na zakończenie instalacji, aby obsłużyć kod powrotny z tej instalacji.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--locale &lt;language-locale&gt;</code></td>
+                    <td>Zmień język wyświetlania interfejsu użytkownika dla samego instalatora. Ustawienie zostanie utrwalone. 
+                        Zobacz pełną listę obsługiwanych ustawień regionalnych języka poniżej.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--cache</code></td>
+                    <td>Jeśli są obecne, pakiety zostaną zachowane po zainstalowaniu na potrzeby kolejnych napraw. 
+                        Zastępuje to globalne ustawienie zasad, które ma być używane na potrzeby kolejnych instalacji, napraw lub modyfikacji. 
+                        Domyślne zasady to buforowanie pakietów. Jest to ignorowane dla polecenia dezinstalacji.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--nocache</code></td>
+                    <td>Jeśli są obecne, pakiety zostaną usunięte po zainstalowaniu lub naprawie. 
+                        Zostaną one pobrane ponownie tylko w razie potrzeby i usunięte ponownie po użyciu. 
+                        Zastępuje to globalne ustawienie zasad, które ma być używane na potrzeby kolejnych instalacji, napraw lub modyfikacji. 
+                        Domyślne zasady to buforowanie pakietów.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--noUpdateInstaller</code></td>
+                    <td>Jeśli ta opcja jest obecna, uniemożliwia instalatorowi samoobsługowne aktualizowanie, gdy jest określony tryb cichy. 
+                        Instalator nie wykona polecenia i zwróci niezerowy kod zakończenia, jeśli parametr noUpdateInstaller zostanie określony w trybie cichym, gdy wymagana jest aktualizacja instalatora.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--noWeb</code></td>
+                    <td>Jeśli są obecne, konfiguracja Visual Studio używa plików w katalogu układu do zainstalowania Visual Studio.
+                        Jeśli użytkownik spróbuje zainstalować składniki, które nie znajdują się w układzie, konfiguracja nie powiedzie się.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path &lt;name&gt;=&lt;path&gt;</code></td>
+                    <td>Służy do określania niestandardowych ścieżek instalacji dla instalacji. Obsługiwane nazwy ścieżek to współużytkowane, buforowane i instalowane.</td>
+                </tr>
+                <tr>
+                    <td><code>--path cache=&lt;path&gt;</code></td>
+                    <td>Używa określonej lokalizacji do pobierania plików instalacyjnych. Tę lokalizację można ustawić tylko przy pierwszym zainstalowaniu Visual Studio. 
+                        Przykład: <code>--path cache="C:\VS\cache"</code>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path shared=&lt;path&gt;</code></td>
+                    <td>Zawiera pliki udostępnione na potrzeby instalacji równoległych programu Visual Studio. 
+                        Niektóre narzędzia i zestawy SDK są instalowane w lokalizacji na tym dysku, a inne mogą zastąpić to ustawienie i zainstalować je na innym dysku. 
+                        Przykład: <code>--path shared="C:\VS\shared"</code> <br><br>Ważne: można to ustawić tylko raz i przy pierwszym zainstalowaniu Visual Studio.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path install=&lt;path&gt;</code></td>
+                    <td>Odpowiednik <code>–-installPath</code>. W szczególności <code>--installPath "C:\VS"</code> i <code>--path install="C:\VS"</code> są równoważne. 
+                        Jednocześnie można użyć tylko jednego z tych elementów.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th>Ustawienia regionalne języka</th>
+                    <th>Język</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>cs-CZ</td>
+                    <td>Czeski</td>
+                </tr>
+                <tr>
+                    <td>de-DE</td>
+                    <td>Niemiecki</td>
+                </tr>
+                <tr>
+                    <td>pl-PL</td>
+                    <td>Angielski</td>
+                </tr>
+                <tr>
+                    <td>es-ES</td>
+                    <td>Hiszpański</td>
+                </tr>
+                <tr>
+                    <td>fr-FR</td>
+                    <td>Francuski</td>
+                </tr>
+                <tr>
+                    <td>it-IT</td>
+                    <td>Włoski</td>
+                </tr>
+                <tr>
+                    <td>ja-JP</td>
+                    <td>Japoński</td>
+                </tr>
+                <tr>
+                    <td>ko-KR</td>
+                    <td>Koreański</td>
+                </tr>
+                <tr>
+                    <td>pl-PL</td>
+                    <td>Polski</td>
+                </tr>
+                <tr>
+                    <td>pt-BR</td>
+                    <td>Portugalski — Brazylia</td>
+                </tr>
+                <tr>
+                    <td>ru-RU</td>
+                    <td>Rosyjski</td>
+                </tr>
+                <tr>
+                    <td>tr-TR</td>
+                    <td>Turecki</td>
+                </tr>
+                <tr>
+                    <td>zh-CN</td>
+                    <td>Chiński — uproszczony</td>
+                </tr>
+                <tr>
+                    <td>zh-TW</td>
+                    <td>Chiński — tradycyjny</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <p>
+        <br />
+        Aby uzyskać szczegółowe instrukcje, odwiedź stronę
+        <span class="style1">
+            <a href="https://go.microsoft.com/fwlink/?LinkID=838246">https://go.microsoft.com/fwlink/?LinkID=838246</a>
+        </span>
+        <br />
+        <br />
+        Ostatnia modyfikacja: 25.05.2022
+    </p>
+    <p>&nbsp;</p>
+</body>
+</html>

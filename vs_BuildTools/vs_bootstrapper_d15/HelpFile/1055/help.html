@@ -1,0 +1,490 @@
+﻿<!DOCTYPE HTML>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <style>
+        body {
+            padding-right: 0px;
+            padding-left: 0px;
+            font-size: 12pt;
+            background: #ffffff;
+            padding-bottom: 12pt;
+            margin: 0px;
+            color: #000000;
+            padding-top: 0px;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        .banner {
+            padding-right: 0px;
+            padding-left: 5px;
+            font-weight: bold;
+            font-size: 10pt;
+            padding-bottom: 6pt;
+            width: 100%;
+            padding-top: 6pt;
+            background-color: #68217A;
+            text-align: left;
+        }
+
+        .style1 {
+            font-family: Arial;
+        }
+
+        table, th, td {
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <div class="banner"><a name="top">Microsoft Visual Studio 2022</a></div>
+    <h1>Visual Studio komut satırı</h1>
+    <h2>Kullanım: vs_enterprise.exe [command [options]]</h2>
+    <h3>(Yüklemekte olduğunuz ürün sürümüne uygun olarak vs_enterprise.exe'yi değiştirin.)</h3>
+    <div>
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Komut satırı komutu</strong></th>
+                    <th><strong>Açıklama</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>(boş)</code></td>
+                    <td>
+                        Ürünü yükler.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>modify</code></td>
+                    <td>
+                        Yüklü bir ürünü değiştirir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>update</code></td>
+                    <td>
+                        Yüklü bir ürünü güncelleştirir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>repair</code></td>
+                    <td>
+                        Yüklü bir ürünü onarır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>resume</code></td>
+                    <td>
+                        Yüklemeyi sürdürür.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>export</code></td>
+                    <td>
+                        Yükleme yapılandırma dosyasını dışarı aktarır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>modifySettings</code></td>
+                    <td>
+                        Mevcut yüklemenin ayarlarını değiştirir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>removeChannel</code></td>
+                    <td>
+                        Kanalı kaldırır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>updateAll</code></td>
+                    <td>
+                        Geçerli tüm yüklemeleri güncelleştirir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>kaldır</code></td>
+                    <td>
+                        Yüklü bir ürünü kaldırır.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Komut satırı seçeneğini yükle</strong></th>
+                    <th><strong>Açıklama</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--installPath &lt;dir&gt;</code></td>
+                    <td>Örneğin üzerinde hareket etmek için yükleme dizini.
+                        Yükleme komutu için bu isteğe bağlıdır ve örneğin yükleneceği yerdir.
+                        Diğer komutlar için bu gereklidir ve daha önce yüklenen örneğin yükleneceği yerdir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--addProductLang &lt;language-locale&gt;</code></td>
+                    <td>Bir yükleme veya değiştirme işlemi sırasında bu, ürüne yüklenen UI dil paketlerini belirler.
+                        Birden çok dil paketi eklemek için komut satırında birden çok kez görünebilir. Mevcut değilse, yükleme makine yerel ayarını kullanır
+                        Aşağıda desteklenen dil yerellerinin tam listesine bakın.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--removeProductLang &lt;language-locale&gt;</code></td>
+                    <td>Bir yükleme veya değiştirme işlemi sırasında bu, üründen kaldırılacak UI dil paketlerini belirler.
+                        Birden çok dil paketi eklemek için komut satırında birden çok kez görünebilir.
+                        Aşağıda desteklenen dil yerellerinin tam listesine bakın.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--add &lt;bir veya daha fazla iş yükü veya bileşen kimliği ekle&gt;</code></td>
+                    <td>Eklenecek bir veya daha fazla iş yükü veya bileşen kimliği.
+ Yapının gerekli bileşenleri yüklenir, ancak önerilen veya isteğe bağlı bileşenler yüklenmez.
+                          Ek bileşenleri genel olarak <code>--includeRecommended</code> ve/veya <code>--includeOptional</code> kullanarak denetleyebilirsiniz.
+                 Birden fazla iş yükü veya bileşen eklemek için Daha ayrıntılı kontrol için <code>--add</code> komutunu (örn. <code>--add Workload1 --add Workload2</code>) tekrarlayın.
+                         Ayrıntılı denetim için kimliğe <code>;includeRecommended</code> veya <code>;includeOptional</code> ekleyebilirsiniz 
+                       (örneğin, <code>--add Workload1;includeRecommended</code> veya <code>--add Workload2;includeRecommended;includeOptional</code>). 
+                        Bu seçeneği gerektiği şekilde yineleyebilirsiniz.</td>
+                </tr>
+                <tr>
+                    <td><code>--remove &lt;one or more workload or component IDs&gt;</code></td>
+                    <td>Kaldırılacak bir veya daha fazla iş yükü veya bileşen kimliği.</td>
+                </tr>
+                <tr>
+                    <td><code>--in &lt;path&gt;</code></td>
+                    <td>Bir cevap dosyasının URI’ı veya yolu.</td>
+                </tr>
+                <tr>
+                    <td><code>--all</code></td>
+                    <td>Bir ürün için tüm iş yüklerinin ve bileşenlerinin yüklenip yüklenmeyeceği.</td>
+                </tr>
+                <tr>
+                    <td><code>--allWorkloads</code></td>
+                    <td>Tüm iş yüklerini ve bileşenleri yükler, önerilen veya isteğe bağlı bileşenler yoktur.</td>
+                </tr>
+                <tr>
+                    <td><code>--includeRecommended</code></td>
+                    <td>Yüklenen tüm iş yükleri için önerilen bileşenleri içerir, ancak isteğe bağlı bileşenleri içermez.
+                        İş yükleri, <code>--allWorkloads</code> veya <code>--add</code> ile belirtilir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeOptional</code></td>
+                    <td>Yüklenen tüm iş yükleri için önerilen bileşenleri içerir, ancak isteğe bağlı bileşenleri içermez.
+                        İş yükleri, <code>--allWorkloads</code> veya <code>--add</code> ile belirtilir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--quiet, -q</code></td>
+                    <td>Yüklemeyi gerçekleştirirken herhangi bir kullanıcı arabirimi görüntülemeyin.</td>
+                </tr>
+                <tr>
+                    <td><code>--passive, -p</code></td>
+                    <td>Kullanıcı arayüzünü görüntüleyin, ancak kullanıcıdan herhangi bir etkileşim talep etmeyin.</td>
+                </tr>
+                <tr>
+                    <td><code>--norestart</code></td>
+                    <td>Varsa, <code>--passive</code> veya <code>--quiet</code> içeren komutlar 
+                        makineyi otomatik olarak yeniden başlatmaz (gerekirse). 
+                        Ne <code>--passive</code> ne de <code>--quiet</code> belirtilmemişse bu yok sayılır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--nickname &lt;name&gt;</code></td>
+                    <td>Bu, yüklü bir ürüne atanacak takma adı tanımlar. 
+                        Takma ad 10 karakterden uzun olamaz.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--productKey &lt;key&gt;</code></td>
+                    <td>Bu, kurulu bir ürün için kullanılacak ürün anahtarını tanımlar. 
+                        <code>xxxxx-xxxxx-xxxxx-xxxxx-xxxxx</code> veya <code>xxxxxxxxxxxxxxxxxxxxxxxx</code> biçiminde 25 alfasayısal karakterden oluşur.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--config &lt;fullpath&gt;</code></td>
+                    <td>Bir yükleme veya değiştirme işlemi sırasında bu, eklenecek iş yüklerini ve bileşenleri 
+                        daha önce kaydedilmiş bir yükleme yapılandırma dosyası temel alınarak. Bu işlem ektir ve herhangi bir iş yükünü veya bileşeni kaldırmaz 
+                        dosyada yoksa. Ayrıca, ürün için geçerli olmayan öğeler eklenmez. Dışarı aktarma işlemi sırasında, 
+                        bu, yükleme yapılandırma dosyasının kaydedil konumunu belirtir.
+                        Bu mutlak bir yol olmalıdır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--help, --?, -h, -?</code></td>
+                    <td>Parametre kullanımını görüntüleyin.</td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Düzen komut satırı seçeneği</strong></th>
+                    <th><strong>Açıklama</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--layout &lt;dir&gt;</code></td>
+                    <td>Çevrimdışı yükleme önbelleği oluşturmak için bir dizini belirtir.</td>
+                </tr>
+                <tr>
+                    <td><code>--lang &lt;one or more language-locales&gt;</code></td>
+                    <td>Belirtilen dil(ler)e sahip kaynak paketleriyle bir çevrimdışı yükleme önbelleği hazırlamak için <code>--layout</code> ile birlikte kullanılır. 
+                        Aşağıda desteklenen dil yerellerinin tam listesine bakın.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--add &lt;one or more workload or component IDs&gt;</code></td>
+                    <td>Eklenecek bir veya daha fazla iş yükü veya bileşen kimliği. Yapının gerekli bileşenleri yüklenir, ancak önerilen veya isteğe bağlı bileşenler yüklenmez. 
+                         Ek bileşenleri genel olarak <code>--includeRecommended</code> ve/veya <code>--includeOptional</code> kullanarak denetleyebilirsiniz. 
+                Daha ayrıntılı denetim için kimliğe <code>;includeRecommended</code> veya <code>;includeOptional</code> ekleyebilirsiniz 
+                       (örneğin, <code>--add Workload1;includeRecommended</code> veya <code>--add Workload2;includeOptional</code>). 
+                         <br>Not: <code>--add</code> kullanılırsa, yalnızca belirtilen iş yükleri, bileşenler ve bunların bağımlılıkları indirilir. 
+                       <code>--add</code> belirtilmezse, tüm iş yükleri ve bileşenler düzene indirilir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeRecommended</code></td>
+                    <td>Yüklenen tüm iş yükleri için önerilen bileşenleri içerir, ancak isteğe bağlı bileşenleri içermez.
+                        İş yükleri, <code>--allWorkloads</code> veya <code>--add</code> ile belirtilir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeOptional</code></td>
+                    <td>Yerleşime dahil edilen iş yükleri için önerilen <em>ve</em> isteğe bağlı bileşenlerini içerir. 
+                        İş yükleri <code>--add</code> ile belirtilir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--keepLayoutVersion</code></td>
+                    <td>Düzenin sürümünü güncelleştirmeden değişiklikleri düzene uygula.</td>
+                </tr>
+                <tr>
+                    <td><code>--verify</code></td>
+                    <td>Bir düzenin içeriğini doğrulayın. Bozuk veya eksik dosyalar listelenir.</td>
+                </tr>
+                <tr>
+                    <td><code>--fix</code></td>
+                    <td>Düzenin içeriğini doğrulayın. 
+                        Bozuk veya eksik dosyalar varsa, yeniden indiriliyor. 
+                        Düzeni düzeltmek için internet erişimi gerekiyor.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--clean &lt;one or more paths to catalogs&gt;</code></td>
+                    <td>Bileşenlerin eski sürümlerini, daha yeni bir sürüme güncellenmiş bir düzenden kaldırır.</td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Gelişmiş komut satırı seçeneği</strong></th>
+                    <th><strong>Açıklama</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--channelId &lt;id&gt;</code></td>
+                    <td>Yüklenecek örneğin kanalının kimliği. 
+                        Bu, yükleme komutu için gereklidir, <code>--installPath</code> belirtilirse diğer komutlar için yoksayılır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--channelUri &lt;uri&gt;</code></td>
+                    <td>Kanal bildiriminin URI'ı. Güncellemeler istenmiyorsa, <code>--channelUri</code> var olmayan bir dosyaya işaret edebilir. 
+                        (örneğin, --channelUri C:\doesntExist.chman) Bu, yükleme komutu için kullanılabilir; diğer komutlar için yoksayılır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--installChannelUri &lt;uri&gt;</code></td>
+                    <td>Yükleme için kullanılacak kanal bildiriminin URI'ı. <code>--channelUri</code> tarafından belirtilen URI 
+                         (<code>--installChannelUri</code> belirtildiğinde belirtilmelidir) güncelleştirmeleri algılamak için kullanılır.
+                         Bu, yükleme komutu için kullanılabilir; diğer komutlar için yoksayılır.
+                        </td>
+                </tr>
+                <tr>
+                    <td><code>--installCatalogUri &lt;uri&gt;</code></td>
+                    <td>Yükleme için kullanılacak katalog bildiriminin URI'ı. 
+                        Belirtilmişse, kanal yöneticisi yükleme kanalı bildiriminde URI'ı kullanmadan önce katalog bildirimini bu URI'dan indirmeye girişimde bulundu. 
+                        Bu parametre, düzen önbelleğinin zaten indirildiği ürün kataloğuyla oluşturulacağı çevrimdışı yüklemeyi desteklemek için kullanılır. 
+                        Bu, yükleme komutu için kullanılabilir; diğer komutlar için yoksayılır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--productId &lt;id&gt;</code></td>
+                    <td>Kurulacak örnek için ürünün kimliği. Bu, normal kurulum koşullarında önceden doldurulur.</td>
+                </tr>
+                <tr>
+                    <td><code>--newChannelUri &lt;uri&gt;</code></td>
+                    <td>Güncelleştirmeler için kullanılacak kanal bildiriminin yeni URI'ı veya yolu.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--layoutUri &lt;uri&gt;</code></td>
+                    <td>Yükleme paketlerini getirmek için kullanılan web tarafından barındırılan düzen URI'si.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--theme &lt;theme&gt;</code></td>
+                    <td>Yükleyicinin renk temasını değiştirir. Değerler Açık/Koyu/HighContrast olabilir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--wait</code></td>
+                    <td>İşlem, bir çıkış kodu döndürmeden önce yüklemenin tamamlanmasını bekler. 
+                        Bu, yüklemeden dönen kodu işlemek için yüklemenin tamamlanmasının beklenmesi gereken yüklemeleri otomatik olarak etkinleştirirken kullanışlıdır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--locale &lt;language-locale&gt;</code></td>
+                    <td>Yükleyicinin kendisi için kullanıcı arabiriminin görüntüleme dilini değiştirin. Ayar kalıcı olur. 
+                        Aşağıda desteklenen dil yerel ayarlarının tam listesine bakın.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--cache</code></td>
+                    <td>Varsa, paketler kurulduktan sonra daha sonraki onarımlar için saklanır. 
+                        Bu, sonraki yüklemeler, onarımlar veya değişiklikler için kullanılacak genel ilke ayarını geçersiz kılar. 
+                        Varsayılan ilke paketleri önbelleğe alır. Kaldırma komutu için bu yoksayılır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--nocache</code></td>
+                    <td>Varsa, paketler yüklendikten veya onarıldıktan sonra silinir. 
+                        Yalnızca gerektiğinde yeniden indirilir ve kullanımdan sonra yeniden silinir. 
+                        Bu, sonraki yüklemeler, onarımlar veya değişiklikler için kullanılacak genel ilke ayarını geçersiz kılar. 
+                        Varsayılan ilke paketleri önbelleğe alır.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--noUpdateInstaller</code></td>
+                    <td>Varsa, sessiz belirtildiğinde yükleyicinin kendini güncellemesini engeller. 
+                       Yükleyici güncelleştirmesi gerektiğinde noUpdateInstaller sessiz olarak belirtilirse yükleyici komutu başarısız olur ve sıfır olmayan bir çıkış kodu döndürür.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--noWeb</code></td>
+                    <td>Varsa, Visual Studio kurulumu, Visual Studio’yu yüklemek için düzen dizininizdeki dosyaları kullanır.
+                        Kullanıcı düzende olmayan bileşenleri yüklemeye çalışırsa kurulum başarısız olur.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path &lt;name&gt;=&lt;path&gt;</code></td>
+                    <td>Yükleme için özel yükleme yolları belirtmek için kullanılır. Desteklenen yol adları paylaşılır, önbelleğe alınır ve yüklenir.</td>
+                </tr>
+                <tr>
+                    <td><code>--path cache=&lt;path&gt;</code></td>
+                    <td>Kurulum dosyalarını indirmek için belirttiğiniz konumu kullanır. Bu konum yalnızca Visual Studio ilk kez kurulduğunda ayarlanabilir. 
+                        Örnek: <code>--path cache="C:\VS\cache"</code>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path shared=&lt;path&gt;</code></td>
+                    <td>Yan yana Visual Studio yüklemeleri için paylaşılan dosyaları içerir. 
+                        Bazı araçlar ve SDK'lar bu sürücüdeki bir konuma yüklenirken, bazıları bu ayarı geçersiz kılabilir ve başka bir sürücüye yüklenebilir. 
+                        Örnek: <code>--path shared="C:\VS\shared"</code> <br><br>Önemli: Bu, yalnızca bir kez ve Visual Studio ilk kez yüklendiğinde ayarlanabilir.
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path install=&lt;path&gt;</code></td>
+                    <td><code>–-installPath</code> ile eşdeğerdir. Özellikle, <code>--installPath "C:\VS"</code> ve <code>--path install="C:\VS"</code> eşdeğerdir. 
+                        Bir seferde bunlardan sadece biri kullanılabilir.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th>Dil yerel ayarı</th>
+                    <th>Dil</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>cs-CZ</td>
+                    <td>Çekçe</td>
+                </tr>
+                <tr>
+                    <td>de-DE</td>
+                    <td>Almanca</td>
+                </tr>
+                <tr>
+                    <td>tr-TR</td>
+                    <td>İngilizce</td>
+                </tr>
+                <tr>
+                    <td>es-ES</td>
+                    <td>İspanyolca</td>
+                </tr>
+                <tr>
+                    <td>fr-FR</td>
+                    <td>Fransızca</td>
+                </tr>
+                <tr>
+                    <td>it-IT</td>
+                    <td>İtalyanca</td>
+                </tr>
+                <tr>
+                    <td>ja-JP</td>
+                    <td>Japonca</td>
+                </tr>
+                <tr>
+                    <td>ko-KR</td>
+                    <td>Korece</td>
+                </tr>
+                <tr>
+                    <td>pl-PL</td>
+                    <td>Lehçe</td>
+                </tr>
+                <tr>
+                    <td>pt-BR</td>
+                    <td>Portekizce - Brezilya</td>
+                </tr>
+                <tr>
+                    <td>ru-RU</td>
+                    <td>Rusça</td>
+                </tr>
+                <tr>
+                    <td>tr-TR</td>
+                    <td>Türkçe</td>
+                </tr>
+                <tr>
+                    <td>zh-CN</td>
+                    <td>Basitleştirilmiş Çince</td>
+                </tr>
+                <tr>
+                    <td>zh-TW</td>
+                    <td>Geleneksel Çince</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <p>
+        <br />
+        Ayrıntılı yönergeler için lütfen şurayı ziyaret edin:
+        <span class="style1">
+            <a href="https://go.microsoft.com/fwlink/?LinkID=838246">https://go.microsoft.com/fwlink/?LinkID=838246</a>
+        </span>
+        <br />
+        <br />
+        Son değiştirilme tarihi: 25/05/2022
+    </p>
+    <p>&nbsp;</p>
+</body>
+</html>

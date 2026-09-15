@@ -1,0 +1,490 @@
+﻿<!DOCTYPE HTML>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <style>
+        body {
+            padding-right: 0px;
+            padding-left: 0px;
+            font-size: 12pt;
+            background: #ffffff;
+            padding-bottom: 12pt;
+            margin: 0px;
+            color: #000000;
+            padding-top: 0px;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        .banner {
+            padding-right: 0px;
+            padding-left: 5px;
+            font-weight: bold;
+            font-size: 10pt;
+            padding-bottom: 6pt;
+            width: 100%;
+            padding-top: 6pt;
+            background-color: #68217A;
+            text-align: left;
+        }
+
+        .style1 {
+            font-family: Arial;
+        }
+
+        table, th, td {
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <div class="banner"><a name="top">Microsoft Visual Studio 2022</a></div>
+    <h1>Visual Studio 命令行</h1>
+    <h2>用法: vs_enterprise.exe [command [options]]</h2>
+    <h3>(根据要安装的产品版本替换 vs_enterprise.exe。)</h3>
+    <div>
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>命令行命令</strong></th>
+                    <th><strong>描述</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>(空白)</code></td>
+                    <td>
+                        安装产品。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>修改</code></td>
+                    <td>
+                        修改已安装的产品。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>更新</code></td>
+                    <td>
+                        更新已安装的产品。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>repair</code></td>
+                    <td>
+                        修复已安装的产品。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>继续</code></td>
+                    <td>
+                        继续安装。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>导出</code></td>
+                    <td>
+                        导出安装配置文件。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>modifySettings</code></td>
+                    <td>
+                        修改现有安装的设置。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>removeChannel</code></td>
+                    <td>
+                        删除通道。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>updateAll</code></td>
+                    <td>
+                        更新所有适用的安装。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>卸载</code></td>
+                    <td>
+                        卸载已安装的产品。
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>安装命令行选项</strong></th>
+                    <th><strong>描述</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--installPath &lt;dir&gt;</code></td>
+                    <td>要对其执行操作的实例的安装目录。
+                        对于安装命令，此为可选项，且是将安装实例的位置。
+                        对于其他命令，此为必需项，且是之前安装实例的安装位置。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--addProductLang &lt;language-locale&gt;</code></td>
+                    <td>在安装或修改操作期间，此项会确定安装到产品的 UI 语言包。
+                        它可以在命令行上多次显示，从而添加多个语言包。如果不存在，则安装会使用计算机区域设置。
+                        请参阅以下受支持的语言区域设置的完整列表。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--removeProductLang &lt;language-locale&gt;</code></td>
+                    <td>在安装或修改操作期间，此项会确定要从产品删除的 UI 语言包。
+                        它可以在命令行上多次显示，从而添加多个语言包。
+                        请参阅以下受支持的语言区域设置的完整列表。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--add &lt;one or more workload or component IDs&gt;</code></td>
+                    <td>要添加的一个或多个工作负载或组件 ID。
+                        已安装项目所需的组件，但未安装推荐或可选组件。
+                        可以使用<code>--includeRecommended</code>和/或<code>--includeOptional</code>全局控制其他组件。
+                        要包含多个工作负载或组件，请重复<code>--add</code>命令(例如，<code>--add Workload1 --add Workload2</code>)。
+                        要实现更精细的控制，可以将<code>;includeRecommended</code>或<code>;includeOptional</code>追加到 ID 
+                        (例如， <code>-- add Workload1;includeRecommended</code>或<code>--add Workload2;includeRecommended;includeOptional</code>)。 
+                        可以根据需要重复此选项。</td>
+                </tr>
+                <tr>
+                    <td><code>--remove &lt;one or more workload or component IDs&gt;</code></td>
+                    <td>要删除的一个或多个工作负载或组件 ID。</td>
+                </tr>
+                <tr>
+                    <td><code>--in &lt;path&gt;</code></td>
+                    <td>响应文件的 URI 或路径。</td>
+                </tr>
+                <tr>
+                    <td><code>--all</code></td>
+                    <td>是否安装产品的所有工作负载和组件。</td>
+                </tr>
+                <tr>
+                    <td><code>--allWorkloads</code></td>
+                    <td>安装所有工作负载和组件，不安装推荐或可选组件。</td>
+                </tr>
+                <tr>
+                    <td><code>--includeRecommended</code></td>
+                    <td>包括任何已安装的工作负载的推荐组件，但不包括可选组件。
+                        使用<code>--allWorkloads</code>或<code>--add</code>指定工作负载。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeOptional</code></td>
+                    <td>包括任何已安装的工作负载的可选组件，但不包括推荐组件。 
+                        使用<code>--allWorkloads</code>或<code>--add</code>指定工作负载。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--quiet, -q</code></td>
+                    <td>执行安装时不显示任何用户界面。</td>
+                </tr>
+                <tr>
+                    <td><code>--passive, -p</code></td>
+                    <td>显示用户界面，但不请求用户进行任何交互。</td>
+                </tr>
+                <tr>
+                    <td><code>--norestart</code></td>
+                    <td>如果存在，则包含<code>--passive</code>或<code>--quiet</code> 
+                        的命令不会自动重启计算机(如有必要)。 
+                        如果既未指定<code>--passive</code>，也未指定<code>--quiet</code>，则会忽略此项。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--nickname &lt;name&gt;</code></td>
+                    <td>这定义了要分配给已安装产品的昵称。 
+                        昵称不能超过 10 个字符。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--productKey &lt;key&gt;</code></td>
+                    <td>这会定义要用于已安装产品的产品密钥。 
+                        它由 25 个字母数字字符组成，格式为 <code>xxxxx-xxxxx-xxxxx-xxxxx-xxxxx</code>或<code>xxxxxxxxx</code>。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--config &lt;fullpath&gt;</code></td>
+                    <td>在安装或修改操作期间，此项会根据之前保存的安装配置文件确定要添加 
+                        的工作负载和组件。此操作为累加性操作，且不会删除任何工作负载或组件 
+                        (如果不存在于文件中)。此外，不会添加不适用于产品的项。在导出操作期间， 
+                        此项会决定保存安装配置文件的位置。
+                        此项必须为绝对路径。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--help, --?, -h, -?</code></td>
+                    <td>显示参数用法。</td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>布局命令行选项</strong></th>
+                    <th><strong>描述</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--layout &lt;dir&gt;</code></td>
+                    <td>指定用于创建脱机安装缓存的目录。</td>
+                </tr>
+                <tr>
+                    <td><code>--lang &lt;one or more language-locales&gt;</code></td>
+                    <td>与<code>--layout</code>结合使用，从而使用具有指定语言的资源包准备脱机安装缓存。 
+                        请参阅以下受支持的语言区域设置的完整列表。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--add &lt;one or more workload or component IDs&gt;</code></td>
+                    <td>要添加的一个或多个工作负载或组件 ID。已安装项目所需的组件，但未安装推荐或可选组件。 
+                        可以使用<code>--includeRecommended</code>和/或<code>--includeOptional</code>全局控制其他组件。 
+                        要实现更精细的控制，可以将 <code>;includeRecommended</code>或<code>;includeOptional</code>追加到 ID 
+                        (例如， <code>-- add Workload1;includeRecommended</code>或<code>--add Workload2;includeOptional</code>)。 
+                        <br>注意: 如果使用<code>--add</code>，则仅下载指定的工作负载和组件及其依赖项。 
+                        如果未指定<code>--add</code>，则所有工作负载和组件都会下载到布局。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeRecommended</code></td>
+                    <td>包括任何已安装的工作负载的推荐组件，但不包括可选组件。
+                        使用<code>--allWorkloads</code>或<code>--add</code>指定工作负载。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--includeOptional</code></td>
+                    <td>包括布局中包含的任何工作负载的推荐<em>和</em>可选组件。 
+                        使用<code>--add</code>指定工作负载。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--keepLayoutVersion</code></td>
+                    <td>在不更新布局版本的情况下对布局应用更改。</td>
+                </tr>
+                <tr>
+                    <td><code>--verify</code></td>
+                    <td>验证布局的内容。列出了任何损坏或缺失的文件。</td>
+                </tr>
+                <tr>
+                    <td><code>--fix</code></td>
+                    <td>验证布局的内容。 
+                        如果发现任何文件已损坏或丢失，则它们会重新下载。 
+                        需要 Internet 访问才可修复布局。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--clean &lt;one or more paths to catalogs&gt;</code></td>
+                    <td>从已更新到较新版本的布局删除旧版本的组件。</td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>高级命令行选项</strong></th>
+                    <th><strong>描述</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--channelId &lt;id&gt;</code></td>
+                    <td>要安装的实例的通道 ID。 
+                        对于安装命令，此为必需项，如果已指定<code>--installPath</code>，则对于其他命令，会忽略此项。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--channelUri &lt;uri&gt;</code></td>
+                    <td>通道清单的 URI。如果无需更新，则<code>--channelUri</code>可以指向不存在的文件。 
+                        (例如，--channelUri C:\doesntExist.chman)此项可用于安装命令；对于其他命令，会忽略此项。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--installChannelUri &lt;uri&gt;</code></td>
+                    <td>用于安装的通道清单的 URI。<code>--channelUri</code> 
+                        指定的 URI (指定<code>--installChannelUri</code>时必须指定)用于检测更新。
+                         此项可用于安装命令；对于其他命令，会忽略此项。
+                        </td>
+                </tr>
+                <tr>
+                    <td><code>--installCatalogUri &lt;uri&gt;</code></td>
+                    <td>要用于安装的目录清单的 URI。 
+                        如果已指定，则通道管理器会尝试从此 URI 下载目录清单，然后再在安装通道清单中使用 URI。 
+                        此参数用于支持脱机安装，其中将使用已下载的产品目录创建布局缓存。 
+                        此项可用于安装命令；对于其他命令，会忽略此项。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--productId &lt;id&gt;</code></td>
+                    <td>将安装的实例的产品 ID。在正常安装条件下预填充此项。</td>
+                </tr>
+                <tr>
+                    <td><code>--newChannelUri &lt;uri&gt;</code></td>
+                    <td>用于更新的通道清单的新 URI 或路径。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--layoutUri &lt;uri&gt;</code></td>
+                    <td>用于提取安装包的 Web 托管布局 URI。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--theme &lt;theme&gt;</code></td>
+                    <td>更改安装程序的颜色主题。这些值可以为 Light/Dark/HighContrast。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--wait</code></td>
+                    <td>该流程将等待安装完成，然后再返回退出代码。 
+                        自动执行安装(其中需要等待安装完成才可处理该安装的返回代码)时，这非常有用。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--locale &lt;language-locale&gt;</code></td>
+                    <td>更改安装程自身的用户界面显示语言。将保留设置。 
+                        请参阅以下受支持的语言区域设置的完整列表。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--cache</code></td>
+                    <td>如果存在，则安装包后会将其保留以进行后续修复。 
+                        此项会替代全局策略设置，以用于后续安装、修复或修改。 
+                        默认策略为缓存包。对于卸载命令，会忽略此项。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--nocache</code></td>
+                    <td>如果存在，则在安装或修复包后将其删除。 
+                        只有当需要时才会再次下载它们，并在使用后再次删除。 
+                        此项会替代全局策略设置，以用于后续安装、修复或修改。 
+                        默认策略为缓存包。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--noUpdateInstaller</code></td>
+                    <td>如果存在，则在指定 quiet 时阻止安装程序更新自身。 
+                        如果在需要安装程序更新时使用 quiet 指定 noUpdateInstaller，则安装程序将无法执行命令并返回非零退出代码。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--noWeb</code></td>
+                    <td>如果存在，则 Visual Studio 安装会使用布局目录中的文件安装 Visual Studio。
+                        如果用户尝试安装不在布局中的组件，则安装会失败。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path &lt;name&gt;=&lt;path&gt;</code></td>
+                    <td>用于指定安装的自定义安装路径。受支持的路径名称为共享、缓存和安装。</td>
+                </tr>
+                <tr>
+                    <td><code>--path cache=&lt;path&gt;</code></td>
+                    <td>使用指定的位置下载安装文件。只能在首次安装 Visual Studio 时才会设置此位置。 
+                        示例: <code>--path cache="C:\VS\cache"</code>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path shared=&lt;path&gt;</code></td>
+                    <td>包含用于并排 Visual Studio 安装的共享文件。 
+                        一些工具和 SDK 会安装到此驱动器上的某个位置，而其他一些工具和 SDK 可能会替代此设置并安装到另一个驱动器。 
+                        示例: <code>--path shared="C:\VS\shared"</code> <br><br>重要: 只有在首次安装 Visual Studio 时才会设置此项，且只设置一次。
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>--path install=&lt;path&gt;</code></td>
+                    <td>等效于<code>–-installPath</code>。具体而言，<code>--installPath "C:\VS"</code>与<code>--path install="C:\VS"</code>等效。 
+                        一次只能使用其中一个。
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        <br />
+        <br />
+        <table>
+            <thead>
+                <tr>
+                    <th>语言区域设置</th>
+                    <th>语言</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>cs-CZ</td>
+                    <td>捷克语</td>
+                </tr>
+                <tr>
+                    <td>de-DE</td>
+                    <td>德语</td>
+                </tr>
+                <tr>
+                    <td>zh-CN</td>
+                    <td>英语</td>
+                </tr>
+                <tr>
+                    <td>es-ES</td>
+                    <td>西班牙语</td>
+                </tr>
+                <tr>
+                    <td>fr-FR</td>
+                    <td>法语</td>
+                </tr>
+                <tr>
+                    <td>it-IT</td>
+                    <td>意大利语</td>
+                </tr>
+                <tr>
+                    <td>ja-JP</td>
+                    <td>日语</td>
+                </tr>
+                <tr>
+                    <td>ko-KR</td>
+                    <td>韩语</td>
+                </tr>
+                <tr>
+                    <td>pl-PL</td>
+                    <td>波兰语</td>
+                </tr>
+                <tr>
+                    <td>pt-BR</td>
+                    <td>葡萄牙语 - 巴西</td>
+                </tr>
+                <tr>
+                    <td>ru-RU</td>
+                    <td>俄语</td>
+                </tr>
+                <tr>
+                    <td>tr-TR</td>
+                    <td>土耳其语</td>
+                </tr>
+                <tr>
+                    <td>zh-CN</td>
+                    <td>中文 - 简体</td>
+                </tr>
+                <tr>
+                    <td>zh-TW</td>
+                    <td>中文 - 繁体</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <p>
+        <br />
+        有关详细说明，请访问
+        <span class="style1">
+            <a href="https://go.microsoft.com/fwlink/?LinkID=838246">https://go.microsoft.com/fwlink/?LinkID=838246</a>
+        </span>
+        <br />
+        <br />
+        上次修改时间: 2022/05/25
+    </p>
+    <p>&nbsp;</p>
+</body>
+</html>

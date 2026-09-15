@@ -61,6 +61,22 @@ export function RegistryApp({ user, onLogout, onBack }: Props) {
     }
   }
 
+  async function runExportOnePdf() {
+    if (!quest) return;
+    setExporting("pdf");
+    setError("");
+    try {
+      const name = quest.employee.fio
+        ? `anketa_${quest.employee.tab_no || quest.assignment_id}.pdf`
+        : "anketa.pdf";
+      await apiDownload(`/api/registry/questionnaire/${quest.assignment_id}/pdf`, name);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось выгрузить анкету PDF");
+    } finally {
+      setExporting("");
+    }
+  }
+
   async function load() {
     try {
       setRows(await apiRegistryRows());
@@ -262,12 +278,11 @@ export function RegistryApp({ user, onLogout, onBack }: Props) {
             <tr>
               <th className="sticky-col">Таб. №</th>
               <th className="sticky-col-2">ФИО</th>
-              <th>Основной</th>
-              <th>Балл</th>
-              <th>Второй</th>
+              <th>Оценщики</th>
               <th>Квыр</th>
               <th>Итог</th>
               <th>Статус</th>
+              <th>Испыт.</th>
               <th>Тариф</th>
             </tr>
           </thead>
@@ -277,6 +292,7 @@ export function RegistryApp({ user, onLogout, onBack }: Props) {
                 key={`${r.assignment_id}-${r.tab_no}`}
                 className={[
                   r.tariff_stale ? "row-warn" : "",
+                  r.probation_active ? "row-probation" : "",
                   selectedEmp === r.employee_id ? "row-selected" : "",
                 ]
                   .filter(Boolean)
@@ -297,18 +313,45 @@ export function RegistryApp({ user, onLogout, onBack }: Props) {
                     {r.fio}
                   </button>
                 </td>
-                <td>{r.primary_fio || "—"}</td>
-                <td>{r.primary_avg ?? "—"}</td>
                 <td>
-                  {r.secondary_fio || "—"}
-                  {r.secondary_avg != null ? ` (${r.secondary_avg})` : ""}
+                  {isChief ? (
+                    <span className="muted">скрыто для начальника</span>
+                  ) : (
+                    <>
+                      <div>
+                        {r.primary_fio || "—"}
+                        {r.primary_avg != null ? ` (${r.primary_avg})` : ""}
+                      </div>
+                      {r.secondary_fio ? (
+                        <div className="muted">
+                          {r.secondary_fio}
+                          {r.secondary_avg != null ? ` (${r.secondary_avg})` : ""}
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </td>
                 <td>{r.k_vyr ?? "—"}</td>
                 <td>{r.final_score ?? "—"}</td>
                 <td>{r.status}</td>
                 <td>
+                  {r.probation_active && r.probation_end_date ? (
+                    <span className="pill warn" title="Идёт испытательный срок">
+                      до {r.probation_end_date}
+                    </span>
+                  ) : r.probation_end_date ? (
+                    <span className="muted">{r.probation_end_date}</span>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                <td
+                  className={r.is_rate_expired ? "rate-expired" : undefined}
+                  title={r.is_rate_expired ? "ЧТС не повышалась более 6 месяцев!" : undefined}
+                >
                   {r.hourly_rate ?? "—"}
-                  {r.tariff_stale ? " ⚠" : ""}
+                  {r.is_rate_expired && " ⚠"}
+                  {r.rate_last_raised ? <div className="muted">{r.rate_last_raised}</div> : null}
                 </td>
               </tr>
             ))}
@@ -334,14 +377,58 @@ export function RegistryApp({ user, onLogout, onBack }: Props) {
                 </p>
                 {quest.employee.hourly_rate != null && (
                   <p className="muted" style={{ margin: 0 }}>
-                    ЧТС: {quest.employee.hourly_rate} ₽/ч
-                    {quest.employee.rate_updated_at ? ` · изм. ${quest.employee.rate_updated_at}` : ""}
+                    ЧТС:{" "}
+                    <span
+                      className={quest.employee.is_rate_expired ? "rate-expired" : undefined}
+                      title={
+                        quest.employee.is_rate_expired
+                          ? "ЧТС не повышалась более 6 месяцев!"
+                          : undefined
+                      }
+                    >
+                      {quest.employee.hourly_rate} ₽/ч
+                    </span>
+                    {quest.employee.is_rate_expired && (
+                      <span className="rate-expired" title="ЧТС не повышалась более 6 месяцев!">
+                        {" "}⚠
+                      </span>
+                    )}
+                    {quest.employee.rate_last_raised
+                      ? ` · поднятие ${quest.employee.rate_last_raised}`
+                      : quest.employee.rate_updated_at
+                        ? ` · изм. ${quest.employee.rate_updated_at}`
+                        : ""}
+                    {quest.employee.tariff_min != null &&
+                      ` · вилка ${quest.employee.tariff_min}–${quest.employee.tariff_max ?? "—"}`}
+                  </p>
+                )}
+                {quest.employee.probation_end_date && (
+                  <p className="muted" style={{ margin: 0 }}>
+                    Испытательный срок
+                    {quest.employee.probation_active ? (
+                      <>
+                        {" "}
+                        <span className="pill warn">до {quest.employee.probation_end_date}</span>
+                      </>
+                    ) : (
+                      <> окончен · {quest.employee.probation_end_date}</>
+                    )}
                   </p>
                 )}
               </div>
-              <button type="button" className="ghost" onClick={() => setQuest(null)}>
-                ✕ Закрыть
-              </button>
+              <div className="modal-head-actions">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={exporting !== ""}
+                  onClick={() => void runExportOnePdf()}
+                >
+                  {exporting === "pdf" ? "Формирую…" : "🖨 Печать / Экспорт PDF"}
+                </button>
+                <button type="button" className="ghost" onClick={() => setQuest(null)}>
+                  ✕ Закрыть
+                </button>
+              </div>
             </div>
 
             <div className="excel-wrap" style={{ maxHeight: "50vh" }}>

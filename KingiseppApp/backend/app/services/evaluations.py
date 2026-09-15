@@ -1,8 +1,8 @@
-"""Общая логика оценок: срочные заявки ↔ назначения ↔ реестр."""
+"""Общая логика оценок: срочные заявки ↔ назначения ↔ реестр, эскалации."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,8 @@ from app.models import (
     EvaluationStatus,
     UrgentEvaluator,
     UrgentRequest,
+    UrgentStatus,
+    User,
 )
 from app.services.events import emit_event
 from app.services.imports import ensure_org_and_period, nf
@@ -58,6 +60,30 @@ def covering_evaluator_ids(
     ):
         ids.add(d.substitute_user_id)
     return ids
+
+
+def covering_map(
+    db: Session,
+    *,
+    organization_id: int,
+    period_id: int,
+) -> dict[int, set[int]]:
+    """original_user_id -> множество заместителей периода (ОДИН запрос на период).
+
+    Используется вместо covering_evaluator_ids в циклах для устранения N+1.
+    """
+    result: dict[int, set[int]] = {}
+    rows = (
+        db.query(Delegation)
+        .filter(
+            Delegation.organization_id == organization_id,
+            Delegation.period_id == period_id,
+        )
+        .all()
+    )
+    for d in rows:
+        result.setdefault(d.original_user_id, set()).add(d.substitute_user_id)
+    return result
 
 
 def site_matches(user_site: str | None, assignment_site: str | None) -> bool:
@@ -124,9 +150,9 @@ def close_urgent_if_complete(
         )
         if not done:
             return False
-    if ur.status != "closed":
-        ur.status = "closed"
-        ur.closed_at = datetime.utcnow()
+    if ur.status != UrgentStatus.closed:
+        ur.status = UrgentStatus.closed
+        ur.closed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         emit_event(
             db,
             organization_id=ur.organization_id,
@@ -238,6 +264,76 @@ def count_closed_assignments(db: Session, period_id: int) -> int:
         .all()
     )
     return sum(1 for asg in assignments if assignment_registry_status(db, asg)[4] == "закрыто")
+
+
+def escalation_report(
+    db: Session,
+    *,
+    organization_id: int,
+    period_id: int,
+) -> list[dict]:
+    """Эскалации: оценивающие с просроченными заданиями (не входили 3+ дня).
+
+    Единая реализация для дашборда, API и планировщика (устраняет дублирование).
+    """
+    threshold = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=3)
+    primaries = (
+        db.query(Assignment.primary_user_id)
+        .filter(
+            Assignment.organization_id == organization_id,
+            Assignment.period_id == period_id,
+            Assignment.evaluate.is_(True),
+            Assignment.primary_user_id.is_not(None),
+        )
+        .distinct()
+        .all()
+    )
+    out: list[dict] = []
+    for (uid,) in primaries:
+        user = db.get(User, uid)
+        if not user or user.organization_id != organization_id:
+            continue
+        pending = (
+            db.query(Assignment)
+            .filter(
+                Assignment.period_id == period_id,
+                Assignment.primary_user_id == uid,
+                Assignment.evaluate.is_(True),
+            )
+            .count()
+        )
+        submitted = (
+            db.query(Evaluation)
+            .join(Assignment, Assignment.id == Evaluation.assignment_id)
+            .filter(
+                Evaluation.evaluator_id == uid,
+                Evaluation.status == EvaluationStatus.submitted,
+                Evaluation.assignment_id.is_not(None),
+                Assignment.period_id == period_id,
+            )
+            .count()
+        )
+        if pending > submitted and (user.last_login_at is None or user.last_login_at < threshold):
+            out.append(
+                {
+                    "user_id": user.id,
+                    "tab_no": user.tab_no,
+                    "fio": user.fio,
+                    "last_login_at": user.last_login_at,
+                    "pending_assignments": pending,
+                    "submitted": submitted,
+                }
+            )
+    return out
+
+
+def escalation_count(
+    db: Session,
+    *,
+    organization_id: int,
+    period_id: int,
+) -> int:
+    return len(escalation_report(db, organization_id=organization_id, period_id=period_id))
 
 
 def repair_completed_urgents(db: Session) -> int:

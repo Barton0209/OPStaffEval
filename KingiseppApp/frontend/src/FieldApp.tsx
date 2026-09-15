@@ -7,11 +7,14 @@ import {
   apiSaveEvaluation,
   apiSiteOverview,
   type AssignmentItem,
+  type SaveEvaluationResult,
   type SessionUser,
   type SiteOverview,
   type Ticket,
 } from "./api";
 import { enqueueOutbox, flushOutbox, listOutbox } from "./offline";
+import { ConflictModal } from "./ConflictModal";
+import { NotificationBell } from "./NotificationBell";
 
 const SCALE = [
   { n: 1, title: "неудовлетворительно", hint: "Проявляет качества, противоположные требуемым." },
@@ -109,6 +112,7 @@ export function FieldApp({ user, online, onLogout, onOpenRegistry }: Props) {
   const [showMyTickets, setShowMyTickets] = useState(false);
   const [overview, setOverview] = useState<SiteOverview | null>(null);
   const [showOverview, setShowOverview] = useState(true);
+  const [conflictData, setConflictData] = useState<SaveEvaluationResult | null>(null);
   const appealRef = useRef<HTMLTextAreaElement>(null);
   const openSeq = useRef(0);
 
@@ -147,9 +151,16 @@ export function FieldApp({ user, online, onLogout, onOpenRegistry }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const n = await flushOutbox();
+        const flush = await flushOutbox();
         if (cancelled) return;
-        if (n) setInfo(`Отправлено сохранённых офлайн анкет: ${n}`);
+        if (flush.ok) setInfo(`Отправлено сохранённых офлайн анкет: ${flush.ok}`);
+        if (flush.conflicts.length > 0) {
+          // Устаревшие черновики удалены из outbox; показываем diff-конфликт.
+          const firstConflict = flush.conflicts[0];
+          if (firstConflict) {
+            setConflictData(firstConflict.response);
+          }
+        }
         try {
           setPending((await listOutbox()).length);
         } catch {
@@ -268,6 +279,7 @@ export function FieldApp({ user, online, onLogout, onOpenRegistry }: Props) {
       );
       if (res.conflict) {
         setError(res.conflict_message || "Список изменился — обновите и оцените снова");
+        setConflictData(res);
         void refreshList();
         return;
       }
@@ -318,10 +330,42 @@ export function FieldApp({ user, online, onLogout, onOpenRegistry }: Props) {
     void sendTicket(raw);
   }
 
+  function onConflictRefill() {
+    // Закрываем модалку и перезагружаем актуальную версию назначения.
+    setConflictData(null);
+    setError("");
+    if (!selected) return;
+    void apiMyAssignments()
+      .then((data) => {
+        setItems(data);
+        const fresh = data.find((i) => i.assignment_id === selected.assignment_id) || null;
+        if (fresh) {
+          setSelected(fresh);
+          setScores(emptyScores());
+          setComment("");
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  function onConflictDiscarded() {
+    setConflictData(null);
+    setError("");
+    setSelected(null);
+    void refreshList();
+  }
+
   if (selected) {
     const today = new Date().toLocaleDateString("ru-RU");
     return (
       <div className="page anketa-page">
+        {conflictData && (
+          <ConflictModal
+            data={conflictData}
+            onRefill={onConflictRefill}
+            onDiscarded={onConflictDiscarded}
+          />
+        )}
         <header className="top">
           <button className="link" type="button" onClick={() => setSelected(null)}>
             ← К списку
@@ -348,8 +392,27 @@ export function FieldApp({ user, online, onLogout, onOpenRegistry }: Props) {
               {selected.experience_text && <div className="muted">Стаж: {selected.experience_text}</div>}
               {isChief && selected.hourly_rate != null && (
                 <div className="muted">
-                  ЧТС: <strong>{selected.hourly_rate} ₽/ч</strong>
-                  {selected.rate_updated_at ? ` · изм. ${selected.rate_updated_at}` : ""}
+                  ЧТС:{" "}
+                  <strong
+                    className={selected.is_rate_expired ? "rate-expired" : undefined}
+                    title={
+                      selected.is_rate_expired
+                        ? "ЧТС не повышалась более 6 месяцев!"
+                        : undefined
+                    }
+                  >
+                    {selected.hourly_rate} ₽/ч
+                  </strong>
+                  {selected.is_rate_expired && (
+                    <span className="rate-expired" title="ЧТС не повышалась более 6 месяцев!">
+                      {" "}⚠
+                    </span>
+                  )}
+                  {selected.rate_last_raised
+                    ? ` · поднятие ${selected.rate_last_raised}`
+                    : selected.rate_updated_at
+                      ? ` · изм. ${selected.rate_updated_at}`
+                      : ""}
                 </div>
               )}
               {selected.last_final_score != null && (
@@ -500,6 +563,13 @@ export function FieldApp({ user, online, onLogout, onOpenRegistry }: Props) {
 
   return (
     <div className="page narrow">
+      {conflictData && (
+        <ConflictModal
+          data={conflictData}
+          onRefill={onConflictRefill}
+          onDiscarded={onConflictDiscarded}
+        />
+      )}
       <header className="top">
         <div>
           <p className="brand">{roleRu(user.role)} · мой список</p>
@@ -674,8 +744,25 @@ export function FieldApp({ user, online, onLogout, onOpenRegistry }: Props) {
               </p>
               {isChief && item.hourly_rate != null && (
                 <p className="muted" style={{ margin: 0 }}>
-                  ЧТС: {item.hourly_rate} ₽/ч
-                  {item.rate_updated_at ? ` · изм. ${item.rate_updated_at}` : ""}
+                  ЧТС:{" "}
+                  <span
+                    className={item.is_rate_expired ? "rate-expired" : undefined}
+                    title={
+                      item.is_rate_expired ? "ЧТС не повышалась более 6 месяцев!" : undefined
+                    }
+                  >
+                    {item.hourly_rate} ₽/ч
+                  </span>
+                  {item.is_rate_expired && (
+                    <span className="rate-expired" title="ЧТС не повышалась более 6 месяцев!">
+                      {" "}⚠
+                    </span>
+                  )}
+                  {item.rate_last_raised
+                    ? ` · поднятие ${item.rate_last_raised}`
+                    : item.rate_updated_at
+                      ? ` · изм. ${item.rate_updated_at}`
+                      : ""}
                 </p>
               )}
             </div>
@@ -698,9 +785,8 @@ export function FieldApp({ user, online, onLogout, onOpenRegistry }: Props) {
                   </span>
                 )}
               <span
-                className={`pill ${
-                  item.evaluation_status === "submitted" ? "ok" : item.evaluation_status === "draft" ? "info" : "warn"
-                }`}
+                className={`pill ${item.evaluation_status === "submitted" ? "ok" : item.evaluation_status === "draft" ? "info" : "warn"
+                  }`}
               >
                 {statusRu(item.evaluation_status, false)}
               </span>
@@ -739,6 +825,7 @@ export function FieldApp({ user, online, onLogout, onOpenRegistry }: Props) {
           <span className="ico">✉</span>
           Обращения
         </button>
+        <NotificationBell variant="nav" />
         <button type="button" onClick={onLogout}>
           <span className="ico">⎋</span>
           Выйти

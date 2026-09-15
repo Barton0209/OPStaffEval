@@ -14,7 +14,8 @@ if settings.database_url.startswith("sqlite"):
 engine = create_engine(
     settings.database_url,
     connect_args=connect_args,
-    pool_pre_ping=True,
+    # pool_pre_ping полезен только для PostgreSQL/MySQL, на SQLite не влияет
+    pool_pre_ping=settings.database_url.startswith("sqlite") is False,
 )
 
 if settings.database_url.startswith("sqlite"):
@@ -24,6 +25,8 @@ if settings.database_url.startswith("sqlite"):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
+        # busy_timeout: предотвращает "database is locked" при параллельных записях
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
 
@@ -39,4 +42,5 @@ def get_db() -> Generator[Session, None, None]:
     try:
         yield db
     finally:
+        db.rollback()
         db.close()

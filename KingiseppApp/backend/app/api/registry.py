@@ -22,10 +22,16 @@ from app.models import (
     User,
     UserRole,
 )
-from app.schemas import KvyрIn, RegistryRow
+from app.schemas import KvyrIn, RegistryRow
 from app.services.evaluations import assignment_registry_status, avg_scores, site_matches
 from app.services.events import emit_event
-from app.services.imports import ensure_org_and_period, nf
+from app.services.imports import ensure_org_and_period, ensure_org_by_id, nf
+from app.services.tariff import (
+    bounds_from_index,
+    grid_bounds,
+    is_rate_expired,
+    load_grid_index,
+)
 
 router = APIRouter(prefix="/api/registry", tags=["registry"])
 settings = get_settings()
@@ -105,6 +111,15 @@ def _pdf_escape(text: str | None) -> str:
     return html.escape(str(text or ""), quote=True)
 
 
+def _xlsx_safe(value):
+    """Защита от Excel-инъекций: значения вида =, +, -, @ экранируются апострофом."""
+    if isinstance(value, str):
+        stripped = value.lstrip()
+        if stripped.startswith(("=", "+", "-", "@")):
+            return "'" + value
+    return value
+
+
 def _assert_chief_site_access(user: User, asg: Assignment) -> None:
     if user.role != UserRole.site_chief:
         return
@@ -118,7 +133,14 @@ def _assert_chief_site_access(user: User, asg: Assignment) -> None:
 
 
 def _collect(db: Session, period, user: User | None = None) -> list[dict]:
-    """Полные строки реестра (для API, Excel и PDF). Для site_chief — только свой участок."""
+    """Полные строки реестра (для API, Excel и PDF). Для site_chief — только свой участок.
+    
+    F05 FIX: фильтрация по организации пользователя.
+    """
+    org_id = user.organization_id if user else None
+    base_filter = [Assignment.period_id == period.id, Assignment.evaluate.is_(True)]
+    if org_id is not None:
+        base_filter.append(Assignment.organization_id == org_id)
     assignments = (
         db.query(Assignment)
         .options(
@@ -126,7 +148,7 @@ def _collect(db: Session, period, user: User | None = None) -> list[dict]:
             joinedload(Assignment.primary_user),
             joinedload(Assignment.secondary_user),
         )
-        .filter(Assignment.period_id == period.id, Assignment.evaluate.is_(True))
+        .filter(*base_filter)
         .all()
     )
     if user and user.role == UserRole.site_chief:
@@ -134,42 +156,71 @@ def _collect(db: Session, period, user: User | None = None) -> list[dict]:
             return []
         assignments = [a for a in assignments if site_matches(user.site_name, a.site_name)]
 
+    # Для начальника участка чужие оценки строго скрыты (п. безопасности): только итоговая.
+    is_site_chief = bool(user and user.role == UserRole.site_chief)
+
+    grid_index = load_grid_index(db)
     rows: list[dict] = []
     for asg in assignments:
         emp: Employee = asg.employee
         primary_ev, secondary_ev, p_avg, s_avg, status = assignment_registry_status(db, asg)
         k = _kvyr_for(db, period.id, emp.id, asg.site_code)
         final = _final_score(p_avg, s_avg, asg.dual_enabled, k, status)
-        rows.append(
-            {
-                "assignment_id": asg.id,
-                "employee_id": emp.id,
-                "tab_no": emp.tab_no,
-                "fio": emp.fio,
-                "position": asg.position_fact or emp.position_1c,
-                "site_name": asg.site_name,
-                "site_code": asg.site_code,
-                "primary_fio": (
-                    primary_ev.evaluator.fio if primary_ev is not None and primary_ev.evaluator
-                    else (asg.primary_user.fio if asg.primary_user else None)
-                ),
-                "primary_avg": p_avg,
-                "secondary_fio": asg.secondary_user.fio if asg.secondary_user else None,
-                "secondary_avg": s_avg,
-                "combined_avg": _combined_avg(p_avg, s_avg),
-                "k_vyr": k,
-                "final_score": final,
-                "status": status,
-                "hourly_rate": emp.hourly_rate,
-                "rate_updated_at": emp.rate_updated_at,
-                "tariff_stale": bool(
-                    _months_since(emp.rate_updated_at) is not None
-                    and _months_since(emp.rate_updated_at) >= 6
-                ),
-                "primary_ev": primary_ev,
-                "secondary_ev": secondary_ev,
-            }
+        t_min, t_max = bounds_from_index(
+            grid_index, asg.position_fact or emp.position_1c, emp.citizenship
         )
+        row = {
+            "assignment_id": asg.id,
+            "employee_id": emp.id,
+            "tab_no": emp.tab_no,
+            "fio": emp.fio,
+            "position": asg.position_fact or emp.position_1c,
+            "site_name": asg.site_name,
+            "site_code": asg.site_code,
+            "primary_fio": (
+                primary_ev.evaluator.fio if primary_ev is not None and primary_ev.evaluator
+                else (asg.primary_user.fio if asg.primary_user else None)
+            ),
+            "primary_avg": p_avg,
+            "secondary_fio": asg.secondary_user.fio if asg.secondary_user else None,
+            "secondary_avg": s_avg,
+            "combined_avg": _combined_avg(p_avg, s_avg),
+            "k_vyr": k,
+            "final_score": final,
+            "status": status,
+            "hourly_rate": emp.hourly_rate,
+            "rate_updated_at": emp.rate_updated_at,
+            "rate_last_raised": emp.rate_last_raised,
+            "citizenship": emp.citizenship,
+            "tariff_stale": bool(
+                _months_since(emp.rate_updated_at) is not None
+                and _months_since(emp.rate_updated_at) >= 6
+            ),
+            "is_rate_expired": is_rate_expired(emp.rate_last_raised),
+            "tariff_min": t_min,
+            "tariff_max": t_max,
+            "primary_ev": primary_ev,
+            "secondary_ev": secondary_ev,
+            # Испытательный срок: дата окончания и признак «активен».
+            "probation_end_date": emp.probation_end_date,
+            "probation_active": bool(
+                emp.probation_end_date is not None and emp.probation_end_date >= date.today()
+            ),
+        }
+        if is_site_chief:
+            # Строгий запрет: никаких чужих баллов/оценщиков — только итог и Квыр.
+            row.update(
+                {
+                    "primary_fio": None,
+                    "primary_avg": None,
+                    "secondary_fio": None,
+                    "secondary_avg": None,
+                    "combined_avg": None,
+                    "primary_ev": None,
+                    "secondary_ev": None,
+                }
+            )
+        rows.append(row)
     return rows
 
 
@@ -178,7 +229,8 @@ def registry_rows(
     user: User = Depends(require_roles(*ALLOWED)),
     db: Session = Depends(get_db),
 ) -> list[RegistryRow]:
-    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    # F05 FIX: используем организацию пользователя, а не settings.org_code
+    org, period = ensure_org_by_id(db, user.organization_id)
     out: list[RegistryRow] = []
     for r in _collect(db, period, user):
         months = _months_since(r["rate_updated_at"])
@@ -192,15 +244,23 @@ def registry_rows(
                 primary_avg=r["primary_avg"],
                 secondary_fio=r["secondary_fio"],
                 secondary_avg=r["secondary_avg"],
+                combined_avg=r["combined_avg"],
                 k_vyr=r["k_vyr"],
                 final_score=r["final_score"],
                 status=r["status"],
                 hourly_rate=r["hourly_rate"],
                 rate_updated_at=r["rate_updated_at"],
+                rate_last_raised=r["rate_last_raised"],
                 months_since_rate_update=months,
                 tariff_stale=r["tariff_stale"],
+                is_rate_expired=r["is_rate_expired"],
+                tariff_min=r["tariff_min"],
+                tariff_max=r["tariff_max"],
+                citizenship=r["citizenship"],
                 employee_id=r["employee_id"],
                 assignment_id=r["assignment_id"],
+                probation_end_date=r["probation_end_date"],
+                probation_active=r["probation_active"],
             )
         )
     return out
@@ -212,6 +272,7 @@ def _ev_block(ev: Evaluation | None, fallback_user: User | None) -> dict | None:
         return None
     evaluator = ev.evaluator if ev is not None else fallback_user
     return {
+        "evaluator_id": (ev.evaluator_id if ev is not None else (fallback_user.id if fallback_user else None)),
         "fio": evaluator.fio if evaluator else None,
         "tab_no": evaluator.tab_no if evaluator else None,
         "role": (ev.evaluator_role.value if ev is not None else (fallback_user.role.value if fallback_user else None)),
@@ -244,9 +305,24 @@ def questionnaire(
     emp = db.get(Employee, asg.employee_id)
     if not emp:
         raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    t_min, t_max = grid_bounds(db, asg.position_fact or emp.position_1c, emp.citizenship)
     primary_ev, secondary_ev, p_avg, s_avg, status = assignment_registry_status(db, asg)
     k = _kvyr_for(db, period.id, emp.id, asg.site_code)
     final = _final_score(p_avg, s_avg, asg.dual_enabled, k, status)
+
+    primary_block = _ev_block(primary_ev, asg.primary_user)
+    secondary_block = _ev_block(secondary_ev, asg.secondary_user)
+
+    if user.role == UserRole.site_chief:
+        # Строгий запрет для начальника: только своя оценка, чужие баллы/комментарии скрыты.
+        def _masked(block: dict | None) -> dict | None:
+            if block is None or block.get("evaluator_id") == user.id:
+                return block
+            return {**block, "scores": {key: None for key, _t in CRITERIA}, "avg": None, "comment": None}
+
+        primary_block = _masked(primary_block)
+        secondary_block = _masked(secondary_block)
+
     return {
         "assignment_id": asg.id,
         "period_code": period.code,
@@ -259,12 +335,26 @@ def questionnaire(
             "experience_text": emp.experience_text,
             "hourly_rate": emp.hourly_rate,
             "rate_updated_at": emp.rate_updated_at,
+            "rate_last_raised": emp.rate_last_raised,
+            "citizenship": emp.citizenship,
+            "is_rate_expired": is_rate_expired(emp.rate_last_raised),
+            "tariff_min": t_min,
+            "tariff_max": t_max,
+            # Испытательный срок сотрудника.
+            "probation_end_date": emp.probation_end_date,
+            "probation_active": bool(
+                emp.probation_end_date is not None and emp.probation_end_date >= date.today()
+            ),
         },
         "criteria": [{"key": key, "title": title} for key, title in CRITERIA],
-        "primary": _ev_block(primary_ev, asg.primary_user),
-        "secondary": _ev_block(secondary_ev, asg.secondary_user),
+        "primary": primary_block,
+        "secondary": secondary_block,
         "dual_enabled": asg.dual_enabled,
-        "combined_avg": _combined_avg(p_avg, s_avg),
+        "combined_avg": (
+            _combined_avg(p_avg, s_avg)
+            if user.role != UserRole.site_chief
+            else None
+        ),
         "k_vyr": k,
         "final_score": final,
         "status": status,
@@ -308,18 +398,18 @@ def export_registry_xlsx(
     for r in rows:
         ws.append(
             [
-                r["tab_no"],
-                r["fio"],
-                r["position"] or "",
-                r["site_name"] or "",
-                r["primary_fio"] or "",
+                _xlsx_safe(r["tab_no"]),
+                _xlsx_safe(r["fio"]),
+                _xlsx_safe(r["position"] or ""),
+                _xlsx_safe(r["site_name"] or ""),
+                _xlsx_safe(r["primary_fio"] or ""),
                 r["primary_avg"] if r["primary_avg"] is not None else "",
-                r["secondary_fio"] or "",
+                _xlsx_safe(r["secondary_fio"] or ""),
                 r["secondary_avg"] if r["secondary_avg"] is not None else "",
                 r["combined_avg"] if r["combined_avg"] is not None else "",
                 r["k_vyr"],
                 r["final_score"] if r["final_score"] is not None else "",
-                r["status"],
+                _xlsx_safe(r["status"]),
                 r["hourly_rate"] if r["hourly_rate"] is not None else "",
                 r["rate_updated_at"].isoformat() if r["rate_updated_at"] else "",
             ]
@@ -512,21 +602,194 @@ def export_questionnaires_pdf(
     return FileResponse(tmp, media_type="application/pdf", filename=f"ankety_{period.code}.pdf")
 
 
+@router.get("/questionnaire/{assignment_id}/pdf")
+def questionnaire_pdf(
+    assignment_id: int,
+    user: User = Depends(require_roles(*ALLOWED)),
+    db: Session = Depends(get_db),
+):
+    """PDF одной объединённой анкеты сотрудника (для печати)."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
+    asg = db.get(Assignment, assignment_id)
+    if not asg or asg.organization_id != user.organization_id or asg.period_id != period.id:
+        raise HTTPException(status_code=404, detail="Закрепление не найдено")
+    _assert_chief_site_access(user, asg)
+    emp = db.get(Employee, asg.employee_id)
+    if not emp:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+
+    primary_ev, secondary_ev, p_avg, s_avg, status = assignment_registry_status(db, asg)
+    if primary_ev is None and secondary_ev is None:
+        raise HTTPException(status_code=400, detail="Анкеты ещё не сданы — выгружать нечего")
+
+    k = _kvyr_for(db, period.id, emp.id, asg.site_code)
+    final = _final_score(p_avg, s_avg, asg.dual_enabled, k, status)
+
+    p_block = _ev_block(primary_ev, asg.primary_user)
+    s_block = _ev_block(secondary_ev, asg.secondary_user)
+
+    if user.role == UserRole.site_chief:
+        # Строгий запрет для начальника: чужие баллы/комментарии в PDF тоже скрыты.
+        def _masked(block: dict | None) -> dict | None:
+            if block is None or block.get("evaluator_id") == user.id:
+                return block
+            return {**block, "scores": {key: None for key, _t in CRITERIA}, "avg": None, "comment": None}
+
+        p_block = _masked(p_block)
+        s_block = _masked(s_block)
+
+    font, font_bold = _register_fonts()
+    tmp = _temp_path("anketa_", ".pdf")
+    doc = SimpleDocTemplate(
+        str(tmp),
+        pagesize=A4,
+        leftMargin=15 * mm,
+        rightMargin=15 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+        title=f"Анкета {emp.fio} · {period.code}",
+    )
+    st_h = ParagraphStyle("h", fontName=font_bold, fontSize=13, spaceAfter=4)
+    st_sub = ParagraphStyle("sub", fontName=font, fontSize=9, textColor=colors.HexColor("#555555"))
+    st_b = ParagraphStyle("b", fontName=font_bold, fontSize=10)
+
+    story: list = []
+    story.append(Paragraph(f"Анкета оценки персонала · {_pdf_escape(period.code)}", st_h))
+    story.append(
+        Paragraph(
+            f"<b>{_pdf_escape(emp.fio)}</b> · таб. {_pdf_escape(emp.tab_no)} · "
+            f"{_pdf_escape(asg.position_fact or emp.position_1c or '—')} · {_pdf_escape(asg.site_name or '—')}",
+            st_sub,
+        )
+    )
+    if emp.hourly_rate is not None:
+        rate_line = f"ЧТС: {emp.hourly_rate}"
+        if emp.rate_updated_at:
+            rate_line += f" (изм. {_pdf_escape(emp.rate_updated_at.isoformat())})"
+        story.append(Paragraph(rate_line, st_sub))
+    story.append(Spacer(1, 4))
+
+    p_name = _pdf_escape(p_block["fio"] if p_block and p_block["fio"] else "1-й оценщик")
+    s_name = _pdf_escape(s_block["fio"] if s_block and s_block["fio"] else "2-й оценщик")
+    data = [["Параметр", p_name, s_name]]
+    for key, title in CRITERIA:
+        pv = p_block["scores"][key] if p_block else None
+        sv = s_block["scores"][key] if s_block else None
+        data.append([title, str(pv) if pv is not None else "—", str(sv) if sv is not None else "—"])
+    data.append(
+        [
+            "Средний балл",
+            str(p_block["avg"]) if p_block and p_block["avg"] is not None else "—",
+            str(s_block["avg"]) if s_block and s_block["avg"] is not None else "—",
+        ]
+    )
+    tbl = Table(data, colWidths=[90 * mm, 45 * mm, 45 * mm])
+    tbl.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, 0), font_bold),
+                ("FONTNAME", (0, -1), (-1, -1), font_bold),
+                ("FONTNAME", (0, 1), (-1, -2), font),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1d4f91")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f5fa")]),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#b9c4d4")),
+                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+    story.append(tbl)
+    story.append(Spacer(1, 4))
+
+    combined = _combined_avg(p_avg, s_avg) if user.role != UserRole.site_chief else None
+    total_line = (
+        f"Общая оценка: {combined if combined is not None else '—'} · "
+        f"Квыр: {k} · Итог: {final if final is not None else '—'} · "
+        f"Статус: {_pdf_escape(status)}"
+    )
+    story.append(Paragraph(total_line, st_b))
+
+    evaluators_line = []
+    if p_block:
+        when = p_block["submitted_at"].strftime("%d.%m.%Y") if p_block["submitted_at"] else "не сдана"
+        evaluators_line.append(
+            f"1-й: {_pdf_escape(p_block['fio'])} ({_pdf_escape(p_block['role_ru'])}), {when}"
+        )
+    if s_block:
+        when = s_block["submitted_at"].strftime("%d.%m.%Y") if s_block["submitted_at"] else "не сдана"
+        evaluators_line.append(
+            f"2-й: {_pdf_escape(s_block['fio'])} ({_pdf_escape(s_block['role_ru'])}), {when}"
+        )
+    if evaluators_line:
+        story.append(Paragraph(" · ".join(evaluators_line), st_sub))
+    if p_block and p_block["comment"]:
+        story.append(Paragraph(f"Комментарий 1-го: {_pdf_escape(p_block['comment'])}", st_sub))
+    if s_block and s_block["comment"]:
+        story.append(Paragraph(f"Комментарий 2-го: {_pdf_escape(s_block['comment'])}", st_sub))
+
+    doc.build(story)
+    emit_event(
+        db,
+        organization_id=user.organization_id,
+        actor_user_id=user.id,
+        entity_type="registry",
+        entity_id=asg.id,
+        action="export_questionnaire_pdf",
+        payload={"employee_id": emp.id},
+    )
+    db.commit()
+    safe_tab = "".join(ch for ch in str(emp.tab_no) if ch.isalnum() or ch in "_-") or "anketa"
+    return FileResponse(tmp, media_type="application/pdf", filename=f"anketa_{safe_tab}.pdf")
+
+
+def _assert_kvyr_site_access(db: Session, user: User, period_id: int, body: KvyrIn) -> None:
+    """site_chief может писать Квыр только на сотрудника/участок своего участка."""
+    if user.role != UserRole.site_chief:
+        return
+    if not nf(user.site_name):
+        raise HTTPException(status_code=400, detail="Укажите участок в «Настройках»")
+    if body.employee_id is not None:
+        emp = db.get(Employee, body.employee_id)
+        if not emp:
+            raise HTTPException(status_code=404, detail="Сотрудник не найден")
+        asg = (
+            db.query(Assignment)
+            .filter(Assignment.period_id == period_id, Assignment.employee_id == emp.id)
+            .order_by(Assignment.id.desc())
+            .first()
+        )
+        site = (asg.site_name if asg else None) or emp.territory
+        if not site or not site_matches(user.site_name, site):
+            raise HTTPException(status_code=403, detail="Сотрудник не относится к вашему участку")
+        return
+    if body.site_code:
+        allowed = nf(body.site_code) in {nf(user.site_code), nf(user.site_name)}
+        if not allowed:
+            raise HTTPException(status_code=403, detail="Чужой участок")
+        return
+    raise HTTPException(status_code=400, detail="Нужен employee_id или site_code вашего участка")
+
+
 @router.post("/kvyr")
 def upsert_kvyr(
-    body: KvyрIn,
+    body: KvyrIn,
     user: User = Depends(require_roles(*ALLOWED)),
     db: Session = Depends(get_db),
 ):
     if not body.employee_id and not body.site_code:
         raise HTTPException(status_code=400, detail="Нужен employee_id или site_code")
     _, period = ensure_org_and_period(db, settings.org_code, settings.org_name)
-    if user.role == UserRole.site_chief:
-        if not nf(user.site_name):
-            raise HTTPException(status_code=400, detail="Укажите участок в «Настройках»")
-        if body.site_code and nf(body.site_code) != nf(user.site_code or user.site_name):
-            # мягкая проверка по коду; имя участка важнее для строк
-            pass
+    _assert_kvyr_site_access(db, user, period.id, body)
     row = ProductionCoeff(
         organization_id=user.organization_id,
         period_id=period.id,

@@ -1,85 +1,32 @@
 from __future__ import annotations
 
-import shutil
-from datetime import datetime, timedelta
-from pathlib import Path
+import logging
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from app.config import APP_ROOT, get_settings
+from app.backup_util import backup_database
 from app.db import SessionLocal
-from app.models import Assignment, Evaluation, EvaluationPeriod, EvaluationStatus, User
+from app.models import DomainEvent, EvaluationPeriod
+from app.services.evaluations import escalation_count
+
+logger = logging.getLogger(__name__)
 
 scheduler = BackgroundScheduler()
 
 
 def backup_db_job() -> None:
-    settings = get_settings()
-    backup_dir = APP_ROOT / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    db_url = settings.database_url
-    if not db_url.startswith("sqlite:///"):
-        return
-    src = Path(db_url.replace("sqlite:///", ""))
-    if not src.exists():
-        return
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    shutil.copy2(src, backup_dir / f"kingisepp_{stamp}.db")
-    # keep last 14 backups
-    files = sorted(backup_dir.glob("kingisepp_*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for old in files[14:]:
-        try:
-            old.unlink()
-        except OSError:
-            pass
-
-
-def _escalation_count(db: Session, period_id: int) -> int:
-    threshold = datetime.utcnow() - timedelta(days=3)
-    primaries = (
-        db.query(Assignment.primary_user_id)
-        .filter(
-            Assignment.period_id == period_id,
-            Assignment.evaluate.is_(True),
-            Assignment.primary_user_id.is_not(None),
-        )
-        .distinct()
-        .all()
-    )
-    count = 0
-    for (uid,) in primaries:
-        user = db.get(User, uid)
-        if not user:
-            continue
-        pending = (
-            db.query(Assignment)
-            .filter(
-                Assignment.period_id == period_id,
-                Assignment.primary_user_id == uid,
-                Assignment.evaluate.is_(True),
-            )
-            .count()
-        )
-        submitted = (
-            db.query(Evaluation)
-            .join(Assignment, Assignment.id == Evaluation.assignment_id)
-            .filter(
-                Evaluation.evaluator_id == uid,
-                Evaluation.status == EvaluationStatus.submitted,
-                Evaluation.assignment_id.is_not(None),
-                Assignment.period_id == period_id,
-            )
-            .count()
-        )
-        if pending > submitted and (user.last_login_at is None or user.last_login_at < threshold):
-            count += 1
-    return count
+    """Бэкап БД с корректным слиянием WAL-журнала (см. app.backup_util)."""
+    try:
+        backup_database()
+        logger.info("Backup completed successfully")
+    except Exception as e:
+        logger.error("Backup failed: %s", e, exc_info=True)
 
 
 def escalation_scan_job() -> None:
-    settings = get_settings()
-    log = settings.logs_dir / "escalations.log"
     db = SessionLocal()
     try:
         period = (
@@ -88,10 +35,40 @@ def escalation_scan_job() -> None:
             .order_by(EvaluationPeriod.id.desc())
             .first()
         )
-        n = _escalation_count(db, period.id) if period else 0
-        with log.open("a", encoding="utf-8") as f:
-            code = period.code if period else "-"
-            f.write(f"{datetime.now().isoformat()} period={code} escalations={n}\n")
+        n = (
+            escalation_count(
+                db,
+                organization_id=period.organization_id,
+                period_id=period.id,
+            )
+            if period
+            else 0
+        )
+        logger.info("escalations period=%s count=%d", period.code if period else "-", n)
+        # Отправка уведомления при наличии просроченных оценок
+        if n > 0 and period:
+            logger.warning(
+                "ESCALATION ALERT: %d оценщиков не вошли в систему за N дней (period=%s)",
+                n,
+                period.code,
+            )
+    except Exception as e:
+        logger.error("Escalation scan failed: %s", e, exc_info=True)
+    finally:
+        db.close()
+
+
+def cleanup_events_job() -> None:
+    """Удаляет DomainEvent старше 90 дней для экономии места в БД."""
+    db = SessionLocal()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+        deleted = db.query(DomainEvent).filter(DomainEvent.created_at < cutoff).delete()
+        db.commit()
+        if deleted > 0:
+            logger.info("Cleaned up %d old DomainEvent records (>90 days)", deleted)
+    except Exception as e:
+        logger.error("Event cleanup failed: %s", e, exc_info=True)
     finally:
         db.close()
 
@@ -101,6 +78,7 @@ def start_scheduler() -> None:
         return
     scheduler.add_job(escalation_scan_job, "cron", hour=9, minute=0, id="escalations", replace_existing=True)
     scheduler.add_job(backup_db_job, "cron", hour=2, minute=0, id="backup", replace_existing=True)
+    scheduler.add_job(cleanup_events_job, "cron", hour=3, minute=30, id="cleanup_events", replace_existing=True)
     # run once at startup for visibility
     scheduler.add_job(escalation_scan_job, "date", id="escalations_boot", replace_existing=True)
     scheduler.start()

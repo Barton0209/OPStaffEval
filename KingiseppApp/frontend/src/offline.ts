@@ -1,5 +1,5 @@
 import Dexie, { type Table } from "dexie";
-import { apiSaveEvaluation } from "./api";
+import { apiSaveEvaluation, type SaveEvaluationResult } from "./api";
 
 export type OutboxItem = {
   id?: number;
@@ -8,6 +8,11 @@ export type OutboxItem = {
   submit: boolean;
   body: Record<string, unknown>;
   createdAt: number;
+};
+
+export type FlushResult = {
+  ok: number;
+  conflicts: { item: OutboxItem; response: SaveEvaluationResult }[];
 };
 
 class OfflineDB extends Dexie {
@@ -29,19 +34,25 @@ export async function listOutbox() {
   return db.outbox.orderBy("createdAt").toArray();
 }
 
-export async function flushOutbox(): Promise<number> {
+export async function flushOutbox(): Promise<FlushResult> {
   const items = await listOutbox();
   let ok = 0;
+  const conflicts: FlushResult["conflicts"] = [];
   for (const item of items) {
     try {
       const res = await apiSaveEvaluation(item.kind, item.targetId, item.body, item.submit);
-      if (!res.conflict && item.id != null) {
+      // Элемент удаляется из очереди в любом случае (отправлен или устарел из-за конфликта).
+      if (item.id != null) {
         await db.outbox.delete(item.id);
+      }
+      if (res.conflict) {
+        conflicts.push({ item, response: res });
+      } else {
         ok += 1;
       }
     } catch {
-      break;
+      break; // нет сети — пробуем в следующий раз
     }
   }
-  return ok;
+  return { ok, conflicts };
 }

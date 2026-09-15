@@ -16,8 +16,11 @@ import {
   apiEvents,
   apiFormalizeCandidate,
   apiImportAll,
+  apiImportDailyAssignees,
+  apiImportTariffGrid,
   apiImportUpload,
   apiListUrgent,
+  apiPatchEmployee,
   apiPatchTicket,
   apiPatchUser,
   apiSecondEvaluation,
@@ -32,188 +35,45 @@ import {
   type Ticket,
 } from "./api";
 
-import { ExcelSheet, type ExcelColumn } from "./ExcelSheet";
-
-type Tab =
-  | "dash"
-  | "assign"
-  | "second"
-  | "urgent"
-  | "delegate"
-  | "employees"
-  | "tickets"
-  | "events"
-  | "settings";
-
-type SettingsSub = "import" | "masters" | "chiefs";
-
-type SecondGroup = "all" | "no_evaluators" | "no_secondary" | "on_first" | "got_first";
-
-type UserDraft = {
-  role: string;
-  site_code: string;
-  site_name: string;
-  status: string;
-  password: string;
-};
-
-const ROLE_LABELS: Record<string, string> = {
-  master: "Мастер",
-  foreman: "Производитель работ",
-  site_chief: "Начальник участка",
-  admin_op: "Администрация ОП",
-  admin: "Админ",
-};
-
-const ROLE_ORDER = ["master", "foreman", "site_chief", "admin_op", "admin"];
-
-function roleLabel(role: string) {
-  return ROLE_LABELS[role] || role;
-}
-
-/** Нормализация для сравнения участков */
-function nfSite(s?: string | null) {
-  return (s || "").trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function evalStatusLabel(st: SecondEvalRow["primary_eval_status"]) {
-  return st === "submitted" ? "сдана" : st === "draft" ? "в работе" : "не начата";
-}
-
-const SECOND_GROUPS: { id: SecondGroup; label: string; match: (r: SecondEvalRow) => boolean }[] = [
-  { id: "all", label: "Все сотрудники", match: () => true },
-  {
-    id: "no_evaluators",
-    label: "Без 1 и 2 оценщика",
-    match: (r) => !r.primary_user_id && !(r.dual_enabled && r.secondary_user_id),
-  },
-  {
-    id: "no_secondary",
-    label: "Без 2 оценщика",
-    match: (r) => !!r.primary_user_id && !(r.dual_enabled && r.secondary_user_id),
-  },
-  {
-    id: "on_first",
-    label: "На 1 оценке",
-    match: (r) => !!r.primary_user_id && r.primary_eval_status !== "submitted",
-  },
-  {
-    id: "got_first",
-    label: "Получили 1 оценку",
-    match: (r) => !!r.primary_user_id && r.primary_eval_status === "submitted",
-  },
-];
+import type { ExcelColumn } from "./ExcelSheet";
+import { NotificationBell } from "./NotificationBell";
+import { AssignmentsPanel } from "./admin/AssignmentsPanel";
+import { DashboardPanel } from "./admin/DashboardPanel";
+import { DelegationsPanel } from "./admin/DelegationsPanel";
+import { EmployeesPanel } from "./admin/EmployeesPanel";
+import { EventsPanel } from "./admin/EventsPanel";
+import { GroupsPanel } from "./admin/GroupsPanel";
+import { SecondEvalPanel } from "./admin/SecondEvalPanel";
+import { SettingsPanel } from "./admin/SettingsPanel";
+import { TicketsPanel } from "./admin/TicketsPanel";
+import { UrgentPanel } from "./admin/UrgentPanel";
+import {
+  BG_IMAGES,
+  ROLE_LABELS,
+  ROLE_ORDER,
+  SECOND_GROUPS,
+  TABS,
+  evalStatusLabel,
+  nfSite,
+  pct,
+  roleLabel,
+  type DelegationRow,
+  type EscalationRow,
+  type EventRow,
+  type FilterMode,
+  type NewUserDraft,
+  type SecondGroup,
+  type SettingsSub,
+  type Tab,
+  type UrgentItem,
+  type UserDraft,
+} from "./admin/common";
 
 type Props = {
   user: SessionUser;
   onLogout: () => void;
   onOpenRegistry: () => void;
 };
-
-/** Фирменные фоны — кроссфейд-слайдшоу */
-const BG_IMAGES = [
-  "./brand/bg-1.png",
-  "./brand/bg-2.png",
-  "./brand/bg-3.png",
-  "./brand/bg-4.png",
-];
-
-
-/** Карточка сводки со всплывающей подсказкой при наведении */
-function DashCard({
-  cls,
-  icon,
-  label,
-  value,
-  hint,
-  tipTitle,
-  tip,
-  onClick,
-}: {
-  cls: string;
-  icon: string;
-  label: string;
-  value: number;
-  hint: string;
-  tipTitle: string;
-  tip: string;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" className={`metric clickable ${cls}`.trim()} onClick={onClick}>
-      <div className="metric-ico" aria-hidden>{icon}</div>
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      <div className="hint">{hint}</div>
-      <span className="metric-tip" role="tooltip">
-        <strong>{tipTitle}</strong>
-        <span>{tip}</span>
-      </span>
-    </button>
-  );
-}
-
-const TABS: { id: Tab; label: string; tipTitle: string; tip: string }[] = [
-  {
-    id: "dash",
-    label: "Сводка",
-    tipTitle: "Сводка",
-    tip: "Общая картина периода: сколько людей на оценке, сдано анкет, срочные и обращения.",
-  },
-  {
-    id: "assign",
-    label: "Закрепление",
-    tipTitle: "Закрепление",
-    tip: "Кто за каким прорабом/мастером. Здесь назначают оценщика и отправляют список на оценку.",
-  },
-  {
-    id: "second",
-    label: "Вторая оценка",
-    tipTitle: "Вторая оценка",
-    tip: "Второй независимый оценщик — начальник участка. Назначается только сотрудникам своего участка.",
-  },
-  {
-    id: "urgent",
-    label: "Срочная",
-    tipTitle: "Срочная оценка",
-    tip: "Внеплановая анкета вне общего списка: выбрать сотрудника и оценщиков, открыть/закрыть заявку.",
-  },
-  {
-    id: "delegate",
-    label: "Замещение",
-    tipTitle: "Замещение",
-    tip: "Временная передача списка оценок другому мастеру/прорабу на период отсутствия.",
-  },
-  {
-    id: "employees",
-    label: "База",
-    tipTitle: "База сотрудников",
-    tip: "Справочник людей из 1С и кандидаты: поиск, добавление, оформление кандидата.",
-  },
-  {
-    id: "tickets",
-    label: "Обращения",
-    tipTitle: "Обращения",
-    tip: "Сообщения с площадки об ошибках в списках. Можно ответить и закрыть обращение.",
-  },
-  {
-    id: "events",
-    label: "Журнал",
-    tipTitle: "Журнал событий",
-    tip: "История действий в системе: импорты, назначения, срочные, изменения.",
-  },
-  {
-    id: "settings",
-    label: "Настройки",
-    tipTitle: "Настройки",
-    tip: "Импорт Excel и управление пользователями: роли, участки, статусы, пароли.",
-  },
-];
-
-function pct(part: number, total: number) {
-  if (!total) return 0;
-  return Math.round((part / total) * 100);
-}
 
 export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
   const [tab, setTab] = useState<Tab>("dash");
@@ -238,17 +98,7 @@ export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
   /** Один выбор: и фильтр таблицы, и кому назначаем отмеченных */
   const [selectedMasterId, setSelectedMasterId] = useState("");
 
-  const [urgent, setUrgent] = useState<
-    {
-      id: number;
-      fio: string;
-      tab_no: string;
-      status: string;
-      comment: string | null;
-      employee_id: number;
-      evaluator_names?: string[];
-    }[]
-  >([]);
+  const [urgent, setUrgent] = useState<UrgentItem[]>([]);
   const [urgEmpId, setUrgEmpId] = useState("");
   const [urgEmpQ, setUrgEmpQ] = useState("");
   const [urgEvalIds, setUrgEvalIds] = useState<number[]>([]);
@@ -257,17 +107,7 @@ export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
   const [urgComment, setUrgComment] = useState("");
   const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
 
-  const [delegations, setDelegations] = useState<
-    {
-      id: number;
-      original_user_id: number;
-      substitute_user_id: number;
-      starts_on: string;
-      ends_on: string;
-      reason: string | null;
-      is_active: boolean;
-    }[]
-  >([]);
+  const [delegations, setDelegations] = useState<DelegationRow[]>([]);
   const [delOrig, setDelOrig] = useState("");
   const [delSub, setDelSub] = useState("");
   const [delFrom, setDelFrom] = useState("");
@@ -282,27 +122,16 @@ export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
   const [formalizeTab, setFormalizeTab] = useState("");
 
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [events, setEvents] = useState<
-    { id: number; entity_type: string; entity_id: number | null; action: string; created_at: string | null }[]
-  >([]);
-  const [escalations, setEscalations] = useState<
-    {
-      user_id: number;
-      fio: string;
-      tab_no: string;
-      pending_assignments: number;
-      submitted: number;
-      last_login_at: string | null;
-    }[]
-  >([]);
+  const [events, setEvents] = useState<EventRow[]>([]);
+  const [escalations, setEscalations] = useState<EscalationRow[]>([]);
 
-  const [filterMode, setFilterMode] = useState<"all" | "evaluate" | "with_primary" | "awaiting" | "dual">(
-    "with_primary",
-  );
+  const [filterMode, setFilterMode] = useState<FilterMode>("with_primary");
   const [visibleAssignRows, setVisibleAssignRows] = useState<AdminAssignment[]>([]);
   const [fileBase, setFileBase] = useState<File | null>(null);
   const [fileUsers, setFileUsers] = useState<File | null>(null);
   const [fileCarnet, setFileCarnet] = useState<File | null>(null);
+  const [fileUd, setFileUd] = useState<File | null>(null);
+  const [fileDaily, setFileDaily] = useState<File | null>(null);
 
   // Настройки: пользователи (роли/участки/статусы/пароли)
   const [settingsSub, setSettingsSub] = useState<SettingsSub>("import");
@@ -312,7 +141,7 @@ export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
   const [userQ, setUserQ] = useState("");
   const [showNewUser, setShowNewUser] = useState(false);
   const [creatingUser, setCreatingUser] = useState(false);
-  const [newUser, setNewUser] = useState({
+  const [newUser, setNewUser] = useState<NewUserDraft>({
     tab_no: "",
     fio: "",
     role: "master",
@@ -1068,10 +897,8 @@ export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
     [selectedIds],
   );
 
-  type UrgentRow = (typeof urgent)[number];
-
-  const urgentColumns = useMemo<ExcelColumn<UrgentRow>[]>(() => {
-    const cols: ExcelColumn<UrgentRow>[] = [
+  const urgentColumns = useMemo<ExcelColumn<UrgentItem>[]>(() => {
+    const cols: ExcelColumn<UrgentItem>[] = [
       {
         id: "id",
         title: "№",
@@ -1132,7 +959,7 @@ export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
     return cols;
   }, [busy, showClosedUrgent]);
 
-  function go(tabId: Tab, opts?: { candidates?: boolean; mode?: typeof filterMode }) {
+  function go(tabId: Tab, opts?: { candidates?: boolean; mode?: FilterMode }) {
     if (opts?.candidates != null) setCandOnly(opts.candidates);
     if (opts?.mode) setFilterMode(opts.mode);
     setTab(tabId);
@@ -1200,7 +1027,12 @@ export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
     setInfo("");
     setError("");
     try {
-      const res = await apiImportUpload({ base: fileBase, users: fileUsers, carnet: fileCarnet });
+      const res = await apiImportUpload({
+        base: fileBase,
+        users: fileUsers,
+        carnet: fileCarnet,
+        ud: fileUd,
+      });
       setInfo(
         res
           .map((r) => `${r.source}: добавлено ${r.added}, обновлено ${r.updated}, пропущено ${r.skipped}`)
@@ -1209,10 +1041,64 @@ export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
       setFileBase(null);
       setFileUsers(null);
       setFileCarnet(null);
+      setFileUd(null);
       await loadDash();
       await reloadMasters();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Загрузка не удалась");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadTariffGrid(file: File) {
+    setBusy(true);
+    setError("");
+    setInfo("");
+    try {
+      const res = await apiImportTariffGrid(file);
+      setInfo(
+        res
+          .map((r) => `${r.source}: добавлено ${r.added}, обновлено ${r.updated}, пропущено ${r.skipped}`)
+          .join(" · "),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Загрузка тарифной сетки не удалась");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runUploadDaily(file: File) {
+    setBusy(true);
+    setError("");
+    setInfo("");
+    try {
+      const res = await apiImportDailyAssignees(file);
+      const errors = res.errors?.length
+        ? ` · ошибок: ${res.errors.length}${res.errors.slice(0, 3).map((e) => `; ${e}`).join("")}`
+        : "";
+      setInfo(`Ежедневная выгрузка: добавлено ${res.added}, обновлено ${res.updated}, пропущено ${res.skipped}${errors}`);
+      setFileDaily(null);
+      await Promise.all([loadDash(), reloadMasters(), reloadAssignments()]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Импорт ежедневной выгрузки не удался");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function patchEmpRate(emp: AdminEmployee, newRate: number) {
+    setBusy(true);
+    setError("");
+    try {
+      const updated = await apiPatchEmployee(emp.id, { hourly_rate: newRate });
+      setEmployees((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+      setInfo(
+        `ЧТС сохранено: ${updated.fio} — ${updated.hourly_rate} (поднятие ${updated.rate_last_raised || "—"})`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось сохранить ЧТС");
     } finally {
       setBusy(false);
     }
@@ -1278,6 +1164,97 @@ export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
     return masters.find((m) => m.id === id)?.fio || `№${id}`;
   }
 
+  // ---------- Функции-обработчики панелей ----------
+  async function reloadAssignments() {
+    setAssignments(await apiAdminAssignments({}));
+    setSelectedIds([]);
+  }
+
+  async function createDelegation() {
+    setBusy(true);
+    try {
+      await apiCreateDelegation({
+        original_user_id: Number(delOrig),
+        substitute_user_id: Number(delSub),
+        starts_on: delFrom,
+        ends_on: delTo,
+      });
+      setDelegations(await apiDelegations());
+      setInfo("Замещение создано");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deactivateDelegation(id: number) {
+    await apiDeactivateDelegation(id);
+    setDelegations(await apiDelegations());
+  }
+
+  async function applyEmpFilter() {
+    setEmployees(await apiEmployees({ q: empQ || undefined, candidates: candOnly }));
+  }
+
+  async function addEmployee() {
+    setBusy(true);
+    try {
+      await apiCreateEmployee({ tab_no: newTab, fio: newFio, is_candidate: false });
+      setNewTab("");
+      setNewFio("");
+      setEmployees(await apiEmployees({ q: empQ || undefined, candidates: candOnly }));
+      setInfo("Сотрудник добавлен");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function formalizeCandidateAction() {
+    setBusy(true);
+    try {
+      await apiFormalizeCandidate({
+        employee_id: Number(formalizeId),
+        new_tab_no: formalizeTab,
+      });
+      setFormalizeId("");
+      setFormalizeTab("");
+      setEmployees(await apiEmployees({ candidates: true }));
+      setInfo("Кандидат оформлен");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendTicketReply(t: Ticket) {
+    setBusy(true);
+    try {
+      const note = (replyDrafts[t.id] ?? "").trim();
+      await apiPatchTicket(t.id, {
+        admin_note: note || undefined,
+        status: note ? "in_progress" : undefined,
+      });
+      setTickets(await apiTickets());
+      setInfo(`Ответ по обращению №${t.id} сохранён`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function closeTicket(t: Ticket) {
+    await apiPatchTicket(t.id, {
+      status: "done",
+      admin_note: (replyDrafts[t.id] ?? t.admin_note ?? "закрыто").trim(),
+    });
+    setTickets(await apiTickets());
+  }
+
   return (
     <div className="page excel-page admin-glass">
       <div className="admin-bg" aria-hidden>
@@ -1301,1191 +1278,228 @@ export function AdminApp({ user, onLogout, onOpenRegistry }: Props) {
             <button type="button" className="pill" onClick={onOpenRegistry}>
               Реестр
             </button>
+            <NotificationBell variant="topbar" />
             <button type="button" className="pill ghost" onClick={onLogout}>
               Выйти
             </button>
           </div>
         </div>
 
-      <nav className="tabs" aria-label="Разделы">
-        {TABS.map((t) => (
-          <div key={t.id} className="tab-tip-wrap">
-            <button
-              type="button"
-              className={tab === t.id ? "tab active" : "tab"}
-              onClick={() => setTab(t.id)}
-              aria-describedby={`tip-${t.id}`}
-            >
-              {t.label}
-            </button>
-            <div className="tab-tip" id={`tip-${t.id}`} role="tooltip">
-              <strong>{t.tipTitle}</strong>
-              <span>{t.tip}</span>
-            </div>
-          </div>
-        ))}
-      </nav>
-
-      {error && <p className="error">{error}</p>}
-      {info && <p className="ok-text">{info}</p>}
-
-      {tab === "dash" && dash && (
-        <>
-          <section className="hero-card">
-            <p className="muted">Период оценки · ВелесстройМонтаж · Кингисепп</p>
-            <h1>{dash.period_code}</h1>
-            <p className="muted">{dash.organization}</p>
-            <div className="progress-block">
-              <div className="progress-meta">
-                <span>
-                  Сдано анкет: {dash.submitted_evaluations} из {dash.evaluate_yes}
-                </span>
-                <strong>{progress}%</strong>
-              </div>
-              <div className="progress-bar" aria-hidden>
-                <span style={{ width: `${Math.min(progress, 100)}%` }} />
+        <nav className="tabs" aria-label="Разделы">
+          {TABS.map((t) => (
+            <div key={t.id} className="tab-tip-wrap">
+              <button
+                type="button"
+                className={tab === t.id ? "tab active" : "tab"}
+                onClick={() => setTab(t.id)}
+                aria-describedby={`tip-${t.id}`}
+              >
+                {t.label}
+              </button>
+              <div className="tab-tip" id={`tip-${t.id}`} role="tooltip">
+                <strong>{t.tipTitle}</strong>
+                <span>{t.tip}</span>
               </div>
             </div>
-          </section>
+          ))}
+        </nav>
 
-          <div className="help-box">
-            <strong>Как оценивают с телефона?</strong>
-            <span className="muted">
-              Мастер или прораб входит своим табельным — видит свой список и ставит оценки. Здесь отдел
-              мобилизации назначает, кто кого оценивает, и загружает Excel.
-            </span>
-          </div>
+        {error && <p className="error">{error}</p>}
+        {info && <p className="ok-text">{info}</p>}
 
-          <section className="dash-grid">
-              <DashCard
-                cls="info"
-                icon="📋"
-                label="В реестре закреплений"
-                value={dash.total_assignments}
-                hint="открыть таблицу назначений"
-                tipTitle="Реестр закреплений"
-                tip="Полный реестр всех закреплений сотрудников за оценщиками. Клик — открыть таблицу назначений."
-                onClick={() => go("assign", { mode: "all" })}
-              />
-              <DashCard
-                cls="ok"
-                icon="✅"
-                label="Идут на оценку"
-                value={dash.evaluate_yes}
-                hint="только отмеченные к оценке"
-                tipTitle="Идут на оценку"
-                tip="Сотрудники, отмеченные к оценке в текущем периоде. Клик — фильтр «на оценке»."
-                onClick={() => go("assign", { mode: "evaluate" })}
-              />
-              <DashCard
-                cls=""
-                icon="👤"
-                label="Есть основной оценщик"
-                value={dash.with_primary}
-                hint="с назначенным мастером/ПР"
-                tipTitle="Есть основной оценщик"
-                tip="Закрепления, у которых назначен основной оценщик (мастер/ПР)."
-                onClick={() => go("assign", { mode: "with_primary" })}
-              />
-              <DashCard
-                cls={dash.awaiting_primary ? "warn" : ""}
-                icon="⏳"
-                label="Ждут назначения"
-                value={dash.awaiting_primary}
-                hint="без оценщика — назначить"
-                tipTitle="Ждут назначения"
-                tip="Сотрудники без оценщика — нужно назначить. Клик — список ожидания."
-                onClick={() => go("assign", { mode: "awaiting" })}
-              />
-              <DashCard
-                cls={dash.candidates ? "info" : ""}
-                icon="🆕"
-                label="Кандидаты"
-                value={dash.candidates}
-                hint="открыть базу кандидатов"
-                tipTitle="Кандидаты"
-                tip="Новые кандидаты в базе. Клик — открыть базу кандидатов."
-                onClick={() => go("employees", { candidates: true })}
-              />
-              <DashCard
-                cls=""
-                icon="👥"
-                label="Двойная оценка"
-                value={dash.dual_enabled}
-                hint="два независимых оценщика"
-                tipTitle="Двойная оценка"
-                tip="Закрепления с двумя независимыми оценщиками — для исключения путаницы и коррупции."
-                onClick={() => go("assign", { mode: "dual" })}
-              />
-              <DashCard
-                cls={dash.open_urgent ? "warn" : "ok"}
-                icon="⚡"
-                label="Срочные оценки"
-                value={dash.open_urgent}
-                hint="открытые срочные запросы"
-                tipTitle="Срочные оценки"
-                tip="Открытые срочные запросы с площадки. Клик — вкладка «Срочная»."
-                onClick={() => go("urgent")}
-              />
-              <DashCard
-                cls={dash.open_tickets ? "warn" : "ok"}
-                icon="💬"
-                label="Обращения с площадки"
-                value={dash.open_tickets}
-                hint="ошибки в списках"
-                tipTitle="Обращения с площадки"
-                tip="Обращения об ошибках в списках. Клик — вкладка «Обращения»."
-                onClick={() => go("tickets")}
-              />
-              <DashCard
-                cls={dash.escalations ? "danger" : "ok"}
-                icon="🚨"
-                label="Эскалации"
-                value={dash.escalations}
-                hint="нет входа > 3 дней"
-                tipTitle="Эскалации"
-                tip="Сотрудники без захода в кабинет более 3 дней при незакрытых оценках. Клик — блок эскалаций."
-                onClick={() => document.getElementById("escalations-block")?.scrollIntoView({ behavior: "smooth" })}
-              />
-              <DashCard
-                cls="ok"
-                icon="📊"
-                label="Сдано анкет"
-                value={dash.submitted_evaluations}
-                hint="открыть реестр итогов"
-                tipTitle="Сдано анкет"
-                tip="Завершённые и сданные оценки. Клик — реестр итогов."
-                onClick={() => onOpenRegistry()}
-              />
-          </section>
+        {tab === "dash" && dash && (
+          <DashboardPanel
+            dash={dash}
+            progress={progress}
+            escalations={escalations}
+            onGo={go}
+            onOpenRegistry={onOpenRegistry}
+          />
+        )}
 
-          <section className="panel" id="escalations-block">
-            <h2>Кто не заходит в систему</h2>
-            <p className="muted">Нет входа больше 3 дней при незакрытых оценках.</p>
-            {escalations.length === 0 && <p className="ok-text">Сейчас эскалаций нет.</p>}
-            <div className="excel-wrap">
-              <table className="excel-table">
-                <thead>
-                  <tr>
-                    <th>ФИО</th>
-                    <th>Таб. №</th>
-                    <th>Осталось</th>
-                    <th>Сдано</th>
-                    <th>Всего</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {escalations.map((e) => (
-                    <tr key={e.user_id}>
-                      <td>{e.fio}</td>
-                      <td>{e.tab_no}</td>
-                      <td>{Math.max(e.pending_assignments - e.submitted, 0)}</td>
-                      <td>{e.submitted}</td>
-                      <td>{e.pending_assignments}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </>
-      )}
-
-      {tab === "assign" && (
-        <section className="panel excel-panel">
-            <h2>Закрепление: сотрудник → прораб / мастер</h2>
-            <p className="muted" style={{ marginTop: 0 }}>
-              В реестре {assignStats.total} человек: с оценщиком {assignStats.withPrimary}, без оценщика{" "}
-              {assignStats.awaiting}.
-            </p>
-
-            <div className="assign-view-tabs">
-              <button
-                type="button"
-                className={filterMode === "with_primary" ? "active" : ""}
-                onClick={() => setFilterMode("with_primary")}
-              >
-                С оценщиком · {assignStats.withPrimary}
-              </button>
-              <button
-                type="button"
-                className={filterMode === "awaiting" ? "active" : ""}
-                onClick={() => setFilterMode("awaiting")}
-              >
-                Без оценщика · {assignStats.awaiting}
-              </button>
-              <button
-                type="button"
-                className={filterMode === "evaluate" ? "active" : ""}
-                onClick={() => setFilterMode("evaluate")}
-              >
-                На оценке · {assignStats.onEval}
-              </button>
-              <button
-                type="button"
-                className={filterMode === "dual" ? "active" : ""}
-                onClick={() => setFilterMode("dual")}
-              >
-                Двойная · {assignStats.dual}
-              </button>
-              <button
-                type="button"
-                className={filterMode === "all" ? "active" : ""}
-                onClick={() => setFilterMode("all")}
-              >
-                Весь реестр · {assignStats.total}
-              </button>
-            </div>
-
-            <div className="bulk-bar panel assign-control-bar">
-              <label className="toolbar-select assign-master-select">
-                Прораб / мастер
-                <select
-                  value={selectedMasterId}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    setSelectedMasterId(id);
-                    if (id && filterMode === "awaiting") {
-                      /* оставляем «Без оценщика» — назначаем им выбранного */
-                    } else if (id) {
-                      setFilterMode("with_primary");
-                    }
-                  }}
-                >
-                  <option value="">— все оценщики —</option>
-                  {masters.map((m) => {
-                    const n = masterCounts.find((c) => c.userId === m.id)?.n ?? 0;
-                    return (
-                      <option key={m.id} value={m.id}>
-                        {m.fio} · {m.role === "master" ? "мастер" : "прораб"}
-                        {n ? ` · ${n} чел.` : ""}
-                      </option>
-                    );
-                  })}
-                </select>
-              </label>
-            <input
-                className="assign-search"
-                placeholder="Поиск: ФИО или табельный"
-              value={assignQ}
-              onChange={(e) => setAssignQ(e.target.value)}
-            />
-            <button
-              type="button"
-                onClick={async () => {
-                  setAssignments(await apiAdminAssignments({}));
-                  setSelectedIds([]);
-                }}
-            >
-                Обновить
-            </button>
-              <span className="muted">
-                На экране: <strong>{filteredAssignments.length}</strong>
-                {selectedIds.length ? ` · отмечено ${selectedIds.length}` : ""}
-              </span>
-            </div>
-
-            <div className="bulk-bar panel">
-              <p className="muted" style={{ margin: 0, flex: "1 1 100%" }}>
-                {selectedMaster ? (
-                  <>
-                    Выбран: <strong>{selectedMaster.fio}</strong>. Отметьте людей галочками, затем назначьте им этого
-                    оценщика. После назначения нажмите «Отправить на оценку» — список появится у него в кабинете.
-                  </>
-                ) : (
-                  <>Сначала выберите прораба/мастера в списке выше. Затем отметьте сотрудников и назначьте их ему.</>
-                )}
-              </p>
-              <button
-                type="button"
-                className="primary"
-                disabled={busy || !selectedIds.length || !selectedMasterId}
-                onClick={() => runBulk({ primary: true })}
-                title="Прописать выбранным сотрудникам этого прораба/мастера как основного оценщика"
-              >
-                Назначить отмеченных → {selectedMaster ? selectedMaster.fio.split(" ").slice(0, 2).join(" ") : "…"}
-              </button>
-              <button
-                type="button"
-                className="primary"
-                disabled={busy || !selectedIds.length}
-                onClick={() => runBulk({ evaluate: true })}
-                title="Показать отмеченных в личном кабинете оценщика для заполнения анкеты"
-              >
-                Отправить на оценку
-              </button>
-              <button
-                type="button"
-                disabled={busy || !selectedIds.length}
-                onClick={() => runBulk({ evaluate: false })}
-                title="Убрать отмеченных из списка оценки у прораба/мастера (закрепление остаётся)"
-              >
-                Снять с оценки
-              </button>
-              <button type="button" className="ghost" disabled={busy} onClick={toggleSelectAllFiltered}>
-                Отметить всех на экране
-              </button>
-              <button type="button" className="ghost" disabled={!selectedIds.length} onClick={() => setSelectedIds([])}>
-                Снять отметки
-              </button>
-            </div>
-
-            <div className="assign-select-all-bar">
-            <label className="check">
-              <input
-                type="checkbox"
-                  checked={
-                    (visibleAssignRows.length ? visibleAssignRows : filteredAssignments).length > 0 &&
-                    (visibleAssignRows.length ? visibleAssignRows : filteredAssignments).every((a) =>
-                      selectedIds.includes(a.assignment_id),
-                    )
-                  }
-                  onChange={toggleSelectAllFiltered}
-              />
-                Отметить всех на экране (с учётом фильтров колонок)
-              </label>
-          </div>
-
-            <ExcelSheet
-              rows={filteredAssignments}
-              columns={assignColumns}
-              rowKey={(a) => a.assignment_id}
-              rowClassName={(a) => (!a.primary_user_id ? "xls-warn" : undefined)}
-              onVisibleRowsChange={setVisibleAssignRows}
-              emptyText={
-                selectedMasterId && filterMode !== "awaiting"
-                  ? "У этого оценщика пока никого нет. Откройте «Без оценщика», отметьте людей и нажмите «Назначить»."
-                  : "Нет строк. Смените вкладку сверху или сбросьте поиск / фильтры в заголовках."
-              }
-            />
-          </section>
+        {tab === "assign" && (
+          <AssignmentsPanel
+            assignments={assignments}
+            filteredAssignments={filteredAssignments}
+            visibleAssignRows={visibleAssignRows}
+            onVisibleRowsChange={setVisibleAssignRows}
+            assignStats={assignStats}
+            assignQ={assignQ}
+            onAssignQ={setAssignQ}
+            selectedMasterId={selectedMasterId}
+            onSelectedMasterId={setSelectedMasterId}
+            masters={masters}
+            masterCounts={masterCounts}
+            selectedMaster={selectedMaster}
+            filterMode={filterMode}
+            onFilterMode={setFilterMode}
+            columns={assignColumns}
+            busy={busy}
+            selectedIds={selectedIds}
+            onSelectedIds={setSelectedIds}
+            onBulk={(opts) => void runBulk(opts)}
+            onToggleSelectAll={toggleSelectAllFiltered}
+            onReload={reloadAssignments}
+          />
         )}
 
         {tab === "second" && (
-          <section className="panel excel-panel">
-            <h2>Вторая оценка</h2>
-            <p className="muted" style={{ marginTop: 0 }}>
-              Второй независимый оценщик — <strong>начальник участка</strong>. Назначить можно только на сотрудников
-              его участка (совпадение по полю «Участок») и только тем, у кого уже есть 1-й оценщик.
-            </p>
+          <SecondEvalPanel
+            rows={secondView}
+            columns={secondColumns}
+            counts={secondCounts}
+            group={secondGroup}
+            onGroup={(g) => {
+              setSecondGroup(g);
+              setAssignMode(false);
+              setSecondSel([]);
+            }}
+            assignMode={assignMode}
+            onAssignMode={(v) => {
+              setAssignMode(v);
+              setSecondSel([]);
+            }}
+            assignActive={assignActive}
+            chiefs={chiefs}
+            chiefId={secondChiefId}
+            onChiefId={(v) => {
+              setSecondChiefId(v);
+              setSecondSel([]);
+            }}
+            chief={secondChief}
+            busy={busy}
+            selected={secondSel}
+            onAssignBulk={() => void assignSecondaryBulk()}
+            onReload={async () => {
+              await loadSecond();
+              setSecondSel([]);
+            }}
+          />
+        )}
 
-            <div className="assign-view-tabs">
-              {SECOND_GROUPS.map((g) => (
-                <button
-                  key={g.id}
-                  type="button"
-                  className={!assignMode && secondGroup === g.id ? "active" : ""}
-                  onClick={() => {
-                    setSecondGroup(g.id);
-                    setAssignMode(false);
-                    setSecondSel([]);
-                  }}
-                >
-                {g.label} · {secondCounts[g.id]}
-              </button>
-            ))}
-              <button
-                type="button"
-                className={assignMode ? "active" : ""}
-                onClick={() => {
-                  setAssignMode(true);
-                  setSecondSel([]);
-                }}
-              >
-                Назначить 2 оценщика
-              </button>
-            </div>
+        {tab === "urgent" && (
+          <UrgentPanel
+            openUrgent={openUrgent}
+            closedUrgent={closedUrgent}
+            showClosed={showClosedUrgent}
+            onShowClosed={setShowClosedUrgent}
+            columns={urgentColumns}
+            employees={employees}
+            empQ={urgEmpQ}
+            onEmpQ={setUrgEmpQ}
+            empId={urgEmpId}
+            onEmpId={setUrgEmpId}
+            empCandidates={urgEmpCandidates}
+            selectedEmp={selectedUrgEmp}
+            masters={masters}
+            evalQ={urgEvalQ}
+            onEvalQ={setUrgEvalQ}
+            evalIds={urgEvalIds}
+            onEvalIds={setUrgEvalIds}
+            masterCandidates={urgMasterCandidates}
+            comment={urgComment}
+            onComment={setUrgComment}
+            busy={busy}
+            onCreate={() => void createUrgent()}
+          />
+        )}
 
-            {assignActive && (
-              <div className="bulk-bar panel assign-control-bar">
-                <label className="toolbar-select assign-master-select">
-                  Начальник участка
-                  <select
-                    value={secondChiefId}
-                    onChange={(e) => {
-                      setSecondChiefId(e.target.value);
-                      setSecondSel([]);
-                    }}
-                  >
-                    <option value="">— выберите начальника участка —</option>
-                    {chiefs.map((c) => {
-                      const match = secondRows.filter(
-                        (r) =>
-                          r.primary_user_id &&
-                          !(r.dual_enabled && r.secondary_user_id) &&
-                          c.site_name &&
-                          nfSite(r.site_name) === nfSite(c.site_name),
-                      ).length;
-                      return (
-                        <option key={c.id} value={c.id}>
-                          {c.fio} · {c.site_name || "участок не указан"}
-                          {match ? ` · доступно ${match} чел.` : ""}
-                        </option>
-                    );
-                  })}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={busy || !secondChief || !secondSel.length}
-                  onClick={() => void assignSecondaryBulk()}
-                  title="Назначить выбранного начальника участка 2-м оценщиком отмеченным сотрудникам"
-                >
-                  Назначить 2-го →{" "}
-                  {secondChief ? secondChief.fio.split(" ").slice(0, 2).join(" ") : "…"}
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await loadSecond();
-                    setSecondSel([]);
-                  }}
-                >
-                  Обновить
-                </button>
-                <span className="muted">
-                  На экране: <strong>{secondView.length}</strong>
-                  {secondSel.length ? ` · отмечено ${secondSel.length}` : ""}
-                </span>
-              </div>
-            )}
-            {assignActive && secondChief && (
-              <p className="muted" style={{ margin: "0 0 0.6rem" }}>
-                Показаны сотрудники участка <strong>{secondChief.site_name}</strong>
-                {assignMode ? " с 1-м оценщиком" : " из этой группы"}. Отметьте галочками, кому назначить 2-го.
-                Кнопка «Снять 2-го» убирает текущего 2-го оценщика.
-              </p>
-            )}
-            {assignActive && !secondChief && (
-              <p className="muted" style={{ margin: "0 0 0.6rem" }}>
-                Выберите начальника участка — список сократится до сотрудников его участка.
-              </p>
-            )}
+        {tab === "delegate" && (
+          <DelegationsPanel
+            masters={masters}
+            delegations={delegations}
+            orig={delOrig}
+            onOrig={setDelOrig}
+            sub={delSub}
+            onSub={setDelSub}
+            from={delFrom}
+            onFrom={setDelFrom}
+            to={delTo}
+            onTo={setDelTo}
+            busy={busy}
+            onMasterName={masterName}
+            onCreate={() => void createDelegation()}
+            onDeactivate={(id) => void deactivateDelegation(id)}
+          />
+        )}
 
-            <ExcelSheet
-              rows={secondView}
-              columns={secondColumns}
-              rowKey={(r) => r.assignment_id}
-              rowClassName={(r) =>
-                assignActive &&
-                  secondChief &&
-                  r.primary_user_id &&
-                  !(r.dual_enabled && r.secondary_user_id)
-                  ? undefined
-                  : assignActive
-                    ? "xls-row-dim"
-                    : !r.primary_user_id
-                      ? "xls-warn"
-                      : undefined
-              }
-              emptyText={
-                assignActive
-                  ? secondChief
-                    ? "На участке этого начальника нет подходящих сотрудников."
-                    : "Выберите начальника участка выше."
-                  : "Нет строк в этой группе. Переключите группу сверху."
-              }
-            />
-        </section>
-      )}
+        {tab === "employees" && (
+          <EmployeesPanel
+            employees={employees}
+            empQ={empQ}
+            onEmpQ={setEmpQ}
+            candOnly={candOnly}
+            onCandOnly={setCandOnly}
+            newTab={newTab}
+            onNewTab={setNewTab}
+            newFio={newFio}
+            onNewFio={setNewFio}
+            formalizeId={formalizeId}
+            onFormalizeId={setFormalizeId}
+            formalizeTab={formalizeTab}
+            onFormalizeTab={setFormalizeTab}
+            busy={busy}
+            onApply={() => void applyEmpFilter()}
+            onAdd={() => void addEmployee()}
+            onFormalize={() => void formalizeCandidateAction()}
+            onPatchRate={(emp, r) => patchEmpRate(emp, r)}
+          />
+        )}
 
-      {tab === "urgent" && (
-          <section className="panel urgent-panel">
-            <div className="urgent-head">
-              <div className="urgent-head-line">
-                <h2>Срочная оценка</h2>
-                <span className="muted">
-                  внеплановая анкета: сотрудник + оценщики · одна открытая заявка на человека
-                </span>
-              </div>
-              <div className="urgent-stats">
-                <span className="pill warn">Открыто · {openUrgent.length}</span>
-                <span className="pill">В архиве · {closedUrgent.length}</span>
-              </div>
-            </div>
+        {tab === "tickets" && (
+          <TicketsPanel
+            tickets={tickets}
+            replyDrafts={replyDrafts}
+            onReplyDraft={(id, v) => setReplyDrafts((d) => ({ ...d, [id]: v }))}
+            busy={busy}
+            onSendReply={(t) => void sendTicketReply(t)}
+            onCloseTicket={(t) => void closeTicket(t)}
+          />
+        )}
 
-            <div className="urgent-create">
-              <div className="urgent-step">
-                <div className="urgent-step-num">1</div>
-                <div className="urgent-step-body">
-                  <strong>Кого оценить</strong>
-                <input
-                    placeholder="Поиск: ФИО или табельный номер"
-                  value={urgEmpQ}
-                    onChange={(e) => {
-                      setUrgEmpQ(e.target.value);
-                      setUrgEmpId("");
-                    }}
-                />
-                  {selectedUrgEmp ? (
-                    <div className="urgent-selected">
-                      <div>
-                        <strong>{selectedUrgEmp.fio}</strong>
-                        <div className="muted">{selectedUrgEmp.tab_no}</div>
-                      </div>
-                      <button
-                        type="button"
-                        className="ghost"
-                        onClick={() => {
-                          setUrgEmpId("");
-                        setUrgEmpQ("");
-                        }}
-                      >
-                        Сменить
-                      </button>
-                    </div>
-                  ) : (
-                    urgEmpQ.trim().length >= 2 && (
-                      <div className="urgent-suggest">
-                        {urgEmpCandidates.length === 0 ? (
-                          <p className="muted">Никого не найдено</p>
-                        ) : (
-                          urgEmpCandidates.map((e) => {
-                            const hasOpen = openUrgent.some((u) => u.employee_id === e.id);
-                            return (
-                              <button
-                                key={e.id}
-                                type="button"
-                                className={`urgent-suggest-item ${hasOpen ? "blocked" : ""}`}
-                                disabled={hasOpen}
-                                onClick={() => {
-                                  setUrgEmpId(String(e.id));
-                                  setUrgEmpQ(e.fio);
-                                }}
-                              >
-                                <span>
-                                  <strong>{e.fio}</strong>
-                                  <span className="muted"> · {e.tab_no}</span>
-                                </span>
-                                {hasOpen && <span className="pill danger">уже открыта</span>}
-                              </button>
-                            );
-                          })
-                        )}
-                        </div>
-                      )
-                )}
-                </div>
-              </div>
+        {tab === "events" && <EventsPanel events={events} />}
 
-              <div className="urgent-step">
-                <div className="urgent-step-num">2</div>
-                <div className="urgent-step-body">
-                  <strong>Кто оценивает</strong>
-                  <input
-                    placeholder="Поиск мастера / прораба"
-                    value={urgEvalQ}
-                    onChange={(e) => setUrgEvalQ(e.target.value)}
-                  />
-                  <div className="urgent-chips">
-                    {urgMasterCandidates.map((m) => {
-                      const on = urgEvalIds.includes(m.id);
-                      return (
-                        <button
-                        key={m.id}
-                        type="button"
-                        className={`urgent-chip ${on ? "on" : ""}`}
-                        onClick={() =>
-                          setUrgEvalIds((prev) =>
-                            on ? prev.filter((id) => id !== m.id) : [...prev, m.id],
-                          )
-                        }
-                      >
-                        {m.fio.split(" ").slice(0, 2).join(" ")}
-                        <span className="muted">
-                          {" "}
-                          · {m.role === "master" ? "мастер" : "прораб"}
-                        </span>
-                      </button>
-                    );
-                  })}
-                  </div>
-                  {urgEvalIds.length > 0 && (
-                    <p className="muted" style={{ margin: "0.35rem 0 0" }}>
-                      Выбрано:{" "}
-                      {masters
-                        .filter((m) => urgEvalIds.includes(m.id))
-                        .map((m) => m.fio.split(" ").slice(0, 2).join(" "))
-                        .join(", ")}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="urgent-step">
-                <div className="urgent-step-num">3</div>
-                <div className="urgent-step-body">
-                  <strong>Комментарий (необязательно)</strong>
-                  <input
-                    placeholder="Например: увольнение / перевод / запрос руководства"
-                    value={urgComment}
-                    onChange={(e) => setUrgComment(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="primary urgent-create-btn"
-                    disabled={busy || !urgEmpId || urgEvalIds.length === 0}
-                    onClick={() => void createUrgent()}
-                  >
-                    Создать срочную оценку
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="urgent-table-block">
-              <div className="urgent-table-tabs">
-                <button
-                  type="button"
-                  className={!showClosedUrgent ? "active" : ""}
-                  onClick={() => setShowClosedUrgent(false)}
-                >
-                  Открытые · {openUrgent.length}
-                </button>
-                <button
-                  type="button"
-                  className={showClosedUrgent ? "active" : ""}
-                  onClick={() => setShowClosedUrgent(true)}
-                >
-                  Архив · {closedUrgent.length}
-                </button>
-              </div>
-
-              <ExcelSheet
-                rows={showClosedUrgent ? closedUrgent : openUrgent}
-                columns={urgentColumns}
-                rowKey={(u) => u.id}
-                emptyText={
-                  showClosedUrgent ? "Архив пуст — закрытых заявок нет" : "Нет открытых срочных заявок"
-                }
-              />
-          </div>
-        </section>
-      )}
-
-      {tab === "delegate" && (
-        <section className="panel">
-          <h2>Замещение</h2>
-          <div className="row">
-            <select value={delOrig} onChange={(e) => setDelOrig(e.target.value)}>
-              <option value="">Кого замещаем…</option>
-              {masters.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.fio}
-                </option>
-              ))}
-            </select>
-            <select value={delSub} onChange={(e) => setDelSub(e.target.value)}>
-              <option value="">Кто замещает…</option>
-              {masters.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.fio}
-                </option>
-              ))}
-            </select>
-            <input type="date" value={delFrom} onChange={(e) => setDelFrom(e.target.value)} />
-            <input type="date" value={delTo} onChange={(e) => setDelTo(e.target.value)} />
-            <button
-              type="button"
-              className="primary"
-                disabled={busy || !delOrig || !delSub || !delFrom || !delTo || delOrig === delSub}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await apiCreateDelegation({
-                    original_user_id: Number(delOrig),
-                    substitute_user_id: Number(delSub),
-                    starts_on: delFrom,
-                    ends_on: delTo,
-                  });
-                  setDelegations(await apiDelegations());
-                  setInfo("Замещение создано");
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : "Ошибка");
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Создать
-            </button>
-          </div>
-          <div className="excel-wrap">
-            <table className="excel-table">
-              <thead>
-                <tr>
-                  <th>Кого</th>
-                  <th>Кто замещает</th>
-                  <th>С</th>
-                  <th>По</th>
-                  <th>Статус</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {delegations.map((d) => (
-                  <tr key={d.id}>
-                    <td>{masterName(d.original_user_id)}</td>
-                    <td>{masterName(d.substitute_user_id)}</td>
-                    <td>{d.starts_on}</td>
-                    <td>{d.ends_on}</td>
-                    <td>{d.is_active ? "действует" : "снято"}</td>
-                    <td>
-                      {d.is_active && (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            await apiDeactivateDelegation(d.id);
-                            setDelegations(await apiDelegations());
-                          }}
-                        >
-                          Снять
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      {tab === "employees" && (
-        <section className="panel excel-panel">
-          <h2>База сотрудников</h2>
-          <div className="excel-toolbar">
-            <input
-              placeholder="Фильтр ФИО / таб.№"
-              value={empQ}
-              onChange={(e) => setEmpQ(e.target.value)}
-            />
-            <button
-              type="button"
-              onClick={async () =>
-                setEmployees(await apiEmployees({ q: empQ || undefined, candidates: candOnly }))
-              }
-            >
-              Применить
-            </button>
-            <label className="check">
-              <input type="checkbox" checked={candOnly} onChange={(e) => setCandOnly(e.target.checked)} />
-              только кандидаты
-            </label>
-          </div>
-          <div className="row">
-            <input placeholder="Табельный №" value={newTab} onChange={(e) => setNewTab(e.target.value)} />
-            <input placeholder="ФИО" value={newFio} onChange={(e) => setNewFio(e.target.value)} />
-            <button
-              type="button"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await apiCreateEmployee({ tab_no: newTab, fio: newFio, is_candidate: false });
-                  setNewTab("");
-                  setNewFio("");
-                  setEmployees(await apiEmployees({ q: empQ || undefined, candidates: candOnly }));
-                  setInfo("Сотрудник добавлен");
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : "Ошибка");
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Добавить в базу
-            </button>
-          </div>
-          <div className="row">
-            <select value={formalizeId} onChange={(e) => setFormalizeId(e.target.value)}>
-              <option value="">Оформить кандидата…</option>
-              {employees
-                .filter((e) => e.is_candidate)
-                .map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.fio} ({e.tab_no})
-                  </option>
-                ))}
-            </select>
-            <input
-              placeholder="Новый табельный №"
-              value={formalizeTab}
-              onChange={(e) => setFormalizeTab(e.target.value)}
-            />
-            <button
-              type="button"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await apiFormalizeCandidate({
-                    employee_id: Number(formalizeId),
-                    new_tab_no: formalizeTab,
-                  });
-                  setFormalizeId("");
-                  setFormalizeTab("");
-                  setEmployees(await apiEmployees({ candidates: true }));
-                  setInfo("Кандидат оформлен");
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : "Ошибка");
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Оформить
-            </button>
-          </div>
-          <div className="excel-wrap tall">
-            <table className="excel-table sticky">
-              <thead>
-                <tr>
-                  <th>id</th>
-                  <th>Таб. №</th>
-                  <th>ФИО</th>
-                  <th>Должность</th>
-                  <th>Кандидат</th>
-                  <th>Дата приёма</th>
-                </tr>
-              </thead>
-              <tbody>
-                {employees.map((e) => (
-                  <tr key={e.id} className={e.is_candidate ? "row-info" : undefined}>
-                    <td>{e.id}</td>
-                    <td>{e.tab_no}</td>
-                    <td>{e.fio}</td>
-                    <td>{e.position_1c || "—"}</td>
-                    <td>{e.is_candidate ? "да" : "нет"}</td>
-                    <td>{e.hire_date || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      {tab === "tickets" && (
-        <section className="panel form-panel">
-          <h2>Обращения с площадки</h2>
-          <p className="muted">Видно, кто написал. Можно ответить мастеру — он увидит ответ в своём списке обращений.</p>
-          <div className="ticket-list">
-            {tickets.length === 0 && <p className="muted">Обращений пока нет</p>}
-            {tickets.map((t) => (
-              <article key={t.id} className="ticket-card">
-                <div className="ticket-card-head">
-                  <strong>№{t.id}</strong>
-                  <span className={`pill ${t.status === "done" ? "ok" : t.status === "new" ? "warn" : "info"}`}>
-                    {t.status === "done" ? "закрыто" : t.status === "new" ? "новое" : "в работе"}
-                  </span>
-                  <span className="muted">{t.created_at}</span>
-                </div>
-                <p>
-                  <strong>От кого:</strong> {t.created_by_fio || "—"}{" "}
-                  <span className="muted">({t.created_by_tab_no || t.created_by_user_id})</span>
-                </p>
-                <p>
-                  <strong>Сообщение:</strong> {t.message}
-                </p>
-                {t.admin_note && (
-                  <p className="ok-text">
-                    <strong>Ваш ответ:</strong> {t.admin_note}
-                  </p>
-                )}
-                <label>
-                  Ответ мастеру
-                  <textarea
-                    rows={2}
-                    placeholder="Напишите ответ…"
-                    value={replyDrafts[t.id] ?? t.admin_note ?? ""}
-                    onChange={(e) => setReplyDrafts((d) => ({ ...d, [t.id]: e.target.value }))}
-                  />
-                </label>
-                <div className="row">
-                  <button
-                    type="button"
-                    className="primary"
-                    disabled={busy}
-                    onClick={async () => {
-                      setBusy(true);
-                      try {
-                        const note = (replyDrafts[t.id] ?? "").trim();
-                        await apiPatchTicket(t.id, {
-                          admin_note: note || undefined,
-                          status: note ? "in_progress" : undefined,
-                        });
-                        setTickets(await apiTickets());
-                        setInfo(`Ответ по обращению №${t.id} сохранён`);
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : "Ошибка");
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  >
-                    Отправить ответ
-                  </button>
-                  {t.status !== "done" && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        await apiPatchTicket(t.id, {
-                          status: "done",
-                          admin_note: (replyDrafts[t.id] ?? t.admin_note ?? "закрыто").trim(),
-                        });
-                        setTickets(await apiTickets());
-                      }}
-                    >
-                      Закрыть обращение
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {tab === "events" && (
-        <section className="panel">
-          <h2>Журнал действий</h2>
-          <div className="excel-wrap tall">
-            <table className="excel-table">
-              <thead>
-                <tr>
-                  <th>Когда</th>
-                  <th>Объект</th>
-                  <th>id</th>
-                  <th>Действие</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((e) => (
-                  <tr key={e.id}>
-                    <td>{e.created_at}</td>
-                    <td>{e.entity_type}</td>
-                    <td>{e.entity_id}</td>
-                    <td>{e.action}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
+        {tab === "groups" && <GroupsPanel />}
 
         {tab === "settings" && (
-          <section className="panel excel-panel">
-            <h2>Настройки</h2>
-
-            <div className="assign-view-tabs">
-              <button
-                type="button"
-                className={settingsSub === "import" ? "active" : ""}
-                onClick={() => setSettingsSub("import")}
-              >
-                Импорт Excel
-              </button>
-              <button
-                type="button"
-                className={settingsSub === "masters" ? "active" : ""}
-                onClick={() => setSettingsSub("masters")}
-              >
-                Прораб / Мастер · {settingsCounts.masters}
-              </button>
-              <button
-                type="button"
-                className={settingsSub === "chiefs" ? "active" : ""}
-                onClick={() => setSettingsSub("chiefs")}
-              >
-                Начальник участка и др. · {settingsCounts.chiefs}
-              </button>
-            </div>
-
-            {settingsSub === "import" && (
-              <>
-                <p className="muted">
-                  Отдел мобилизации загружает три файла: база 1С, пользователи и{" "}
-                  <strong>03_Реестр_закрепления.xlsx</strong> (кто за каким прорабом/мастером). Реестр закрепления —
-                  долгоживущий: достаточно загрузить при старте или при изменении; пока не поменяете — человек
-                  остаётся за тем же оценщиком (год и дольше). Смотреть список: вкладка «Закрепление».
-                </p>
-
-                <div className="upload-grid">
-                  <label className="upload-card">
-                    <strong>1. База 1С</strong>
-                    <span className="muted">файл 01_База_1С.xlsx</span>
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls"
-                      onChange={(e) => setFileBase(e.target.files?.[0] || null)}
-                    />
-                    {fileBase && <span className="ok-text">{fileBase.name}</span>}
-                  </label>
-                  <label className="upload-card">
-                    <strong>2. Пользователи</strong>
-                    <span className="muted">файл 02_Пользователи.xlsx</span>
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls"
-                      onChange={(e) => setFileUsers(e.target.files?.[0] || null)}
-                    />
-                    {fileUsers && <span className="ok-text">{fileUsers.name}</span>}
-                  </label>
-                  <label className="upload-card">
-                    <strong>3. Реестр закрепления</strong>
-                    <span className="muted">файл 03_Реестр_закрепления.xlsx</span>
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls"
-                      onChange={(e) => setFileCarnet(e.target.files?.[0] || null)}
-                    />
-                    {fileCarnet && <span className="ok-text">{fileCarnet.name}</span>}
-                  </label>
-                </div>
-
-                <div className="row" style={{ marginTop: "1rem" }}>
-                  <button
-                    type="button"
-                    className="primary"
-                    disabled={busy || (!fileBase && !fileUsers && !fileCarnet)}
-                    onClick={runImportUpload}
-                  >
-                    {busy ? "Загрузка…" : "Загрузить выбранные файлы"}
-                  </button>
-                  <button type="button" disabled={busy} onClick={runImportFolder}>
-                    Импорт из папки Files на сервере
-                  </button>
-                </div>
-                <p className="muted" style={{ marginTop: "0.75rem" }}>
-                  После загрузки данные сразу попадают в назначения, базу и пользователей. Можно повторять импорт —
-                  строки обновятся.
-                </p>
-              </>
-            )}
-
-            {settingsSub !== "import" && (
-              <>
-                <p className="muted" style={{ marginTop: 0 }}>
-                  {settingsSub === "masters"
-                    ? "Пользователи с ролью «Мастер» или «Производитель работ» из файла 02_Пользователи.xlsx."
-                    : "Начальники участков и остальные пользователи из файла 02_Пользователи.xlsx."}{" "}
-                  Правьте роль, участок, статус или пароль и нажимайте «Сохранить» в строке. Пустое поле пароля — не
-                  менять.
-                </p>
-                <div className="excel-toolbar">
-                  <input
-                    placeholder="Поиск: ФИО / таб.№ / участок"
-                    value={userQ}
-                    onChange={(e) => setUserQ(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={() => {
-                      setShowNewUser((v) => !v);
-                      setNewUser((p) => ({
-                        ...p,
-                        role: settingsSub === "masters" ? "master" : "site_chief",
-                      }));
-                    }}
-                  >
-                    {showNewUser ? "✕ Отмена" : "+ Создать сотрудника"}
-                  </button>
-                  <button type="button" disabled={busy} onClick={() => usersFileRef.current?.click()}>
-                    ⬆ Загрузить из файла
-                  </button>
-                  <input
-                    ref={usersFileRef}
-                    type="file"
-                    accept=".xlsx,.xls"
-                    style={{ display: "none" }}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) void uploadUsersFile(f);
-                    }}
-                  />
-                  <button type="button" onClick={() => void loadAllUsers()}>
-                    Обновить
-                  </button>
-                  <span className="muted">
-                    На экране: <strong>{settingsUsers.length}</strong>
-                    {Object.keys(userEdits).length
-                      ? ` · изменено строк: ${Object.keys(userEdits).length}`
-                      : ""}
-                  </span>
-                </div>
-                {showNewUser && (
-                  <div className="row panel new-user-form">
-                    <input
-                      placeholder="Таб. № *"
-                      value={newUser.tab_no}
-                      onChange={(e) => setNewUser({ ...newUser, tab_no: e.target.value })}
-                      style={{ width: 130 }}
-                    />
-                    <input
-                      placeholder="ФИО *"
-                      value={newUser.fio}
-                      onChange={(e) => setNewUser({ ...newUser, fio: e.target.value })}
-                      style={{ minWidth: 220 }}
-                    />
-                    <select
-                      value={newUser.role}
-                      onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                      aria-label="Роль"
-                    >
-                      {Object.entries(ROLE_LABELS).map(([val, label]) => (
-                        <option key={val} value={val}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      placeholder="Код участка"
-                      value={newUser.site_code}
-                      onChange={(e) => setNewUser({ ...newUser, site_code: e.target.value })}
-                      style={{ width: 110 }}
-                    />
-                    <input
-                      placeholder="Участок"
-                      value={newUser.site_name}
-                      onChange={(e) => setNewUser({ ...newUser, site_name: e.target.value })}
-                      style={{ width: 170 }}
-                    />
-                    <select
-                      value={newUser.status}
-                      onChange={(e) => setNewUser({ ...newUser, status: e.target.value })}
-                      aria-label="Статус"
-                    >
-                      <option value="Активен">Активен</option>
-                      <option value="Отключен">Отключен</option>
-                    </select>
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      placeholder="Пароль *"
-                      value={newUser.password}
-                      onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                      style={{ width: 120 }}
-                    />
-                    <button type="button" className="primary" disabled={creatingUser} onClick={() => void createUser()}>
-                      {creatingUser ? "Создаю…" : "Создать"}
-                    </button>
-                  </div>
-                )}
-                <ExcelSheet
-                  rows={settingsUsers}
-                  columns={userColumns}
-                  rowKey={(u) => u.id}
-                  defaultRowHeight={36}
-                  emptyText="Нет пользователей в этой группе."
-                />
-              </>
-            )}
-        </section>
-      )}
+          <SettingsPanel
+            sub={settingsSub}
+            onSub={setSettingsSub}
+            counts={settingsCounts}
+            fileBase={fileBase}
+            onFileBase={setFileBase}
+            fileUsers={fileUsers}
+            onFileUsers={setFileUsers}
+            fileCarnet={fileCarnet}
+            onFileCarnet={setFileCarnet}
+            fileUd={fileUd}
+            onFileUd={setFileUd}
+            busy={busy}
+            onUpload={() => void runImportUpload()}
+            onImportFolder={() => void runImportFolder()}
+            onUploadTariffGrid={(f) => void uploadTariffGrid(f)}
+            fileDaily={fileDaily}
+            onFileDaily={setFileDaily}
+            onUploadDaily={(f) => void runUploadDaily(f)}
+            users={settingsUsers}
+            userQ={userQ}
+            onUserQ={setUserQ}
+            userEdits={userEdits}
+            savingUserId={savingUserId}
+            columns={userColumns}
+            showNewUser={showNewUser}
+            onToggleNewUser={() => setShowNewUser((v) => !v)}
+            newUser={newUser}
+            onNewUser={setNewUser}
+            creatingUser={creatingUser}
+            onCreateUser={() => void createUser()}
+            usersFileRef={usersFileRef}
+            onUploadUsersFile={(f) => void uploadUsersFile(f)}
+            onReloadUsers={async () => {
+              await loadAllUsers();
+            }}
+          />
+        )}
       </div>
     </div>
   );
