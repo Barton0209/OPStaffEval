@@ -192,62 +192,6 @@ def import_all_excel(
     ]
 
 
-@router.post("/import/upload", response_model=list[ImportResult])
-async def import_upload(
-    base_file: UploadFile | None = File(None, description="01_База_1С.xlsx"),
-    users_file: UploadFile | None = File(None, description="02_Пользователи.xlsx"),
-    carnet_file: UploadFile | None = File(None, description="03_Реестр_закрепления.xlsx"),
-    ud_file: UploadFile | None = File(None, description="УД_Список сотрудников (.xlsb)"),
-    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
-    db: Session = Depends(get_db),
-) -> list[ImportResult]:
-    """Загрузка Excel прямо из браузера."""
-    if not base_file and not users_file and not carnet_file and not ud_file:
-        raise HTTPException(status_code=400, detail="Выберите хотя бы один Excel-файл")
-    org, period = ensure_org_by_id(db, user.organization_id)
-    files_dir = settings.files_path
-    files_dir.mkdir(parents=True, exist_ok=True)
-    results: list[ImportResult] = []
-
-    max_bytes = settings.max_upload_mb * 1024 * 1024
-    XLSX_MAGIC = b"PK\x03\x04"
-
-    async def _save(upload: UploadFile, target_name: str) -> Path:
-        # Валидация: сигнатура xlsx/xlsb (zip-контейнер) и лимит размера.
-        head = await upload.read(4)
-        await upload.seek(0)
-        if head != XLSX_MAGIC:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{target_name}: файл не является Excel (.xlsx/.xlsb)",
-            )
-        content = await upload.read(max_bytes + 1)
-        await upload.seek(0)
-        if len(content) > max_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"{target_name}: размер превышает {settings.max_upload_mb} МБ",
-            )
-        dest = files_dir / target_name
-        with dest.open("wb") as out:
-            shutil.copyfileobj(upload.file, out)
-        return dest
-
-    if base_file and base_file.filename:
-        path = await _save(base_file, "01_База_1С.xlsx")
-        results.append(import_base(db, path, org, user.id))
-    if users_file and users_file.filename:
-        path = await _save(users_file, "02_Пользователи.xlsx")
-        results.append(import_users(db, path, org, user.id))
-    if carnet_file and carnet_file.filename:
-        path = await _save(carnet_file, "03_Реестр_закрепления.xlsx")
-        results.append(import_carnet(db, path, org, period, user.id))
-    if ud_file and ud_file.filename:
-        path = await _save(ud_file, "УД_Список_сотрудников.xlsb")
-        results.append(import_ud_rates(db, path, org, user.id))
-    return results
-
-
 @router.post("/import/daily-assignees", response_model=ImportResult)
 async def import_daily_assignees_file(
     daily_file: UploadFile = File(..., description="Ежедневная выгрузка (Табельный/ФИО/Должность/Участок/Прораб)"),

@@ -38,7 +38,10 @@ def _ensure_bootstrap_admin() -> None:
             .first()
         )
         if not admin:
-            temp_pwd = generate_temporary_password()
+            if not settings.admin_initial_password:
+                logger.error("ADMIN-OP не создан: задайте ADMIN_INITIAL_PASSWORD и перезапустите приложение.")
+                db.rollback()
+                return
             db.add(
                 User(
                     organization_id=org.id,
@@ -46,11 +49,11 @@ def _ensure_bootstrap_admin() -> None:
                     fio="Администрация ОП",
                     role=UserRole.admin_op,
                     status=UserStatus.active,
-                    password_hash=hash_password(temp_pwd),
+                    password_hash=hash_password(settings.admin_initial_password),
                     must_change_password=True,
                 )
             )
-            logger.warning("Создана учётная запись ADMIN-OP. Пароль выдан отдельно.")
+            logger.warning("Создана учётная запись ADMIN-OP из ADMIN_INITIAL_PASSWORD; значение не журналируется.")
             logger.warning("Обязательно смените пароль при первом входе.")
         chief = (
             db.query(User)

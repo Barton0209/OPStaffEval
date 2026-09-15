@@ -43,6 +43,7 @@ cloudflared.exe
 # Temporary scripts
 _patch_*.py
 test_*.py
+!KingiseppApp/backend/tests/test_*.py
 
 # Config with possible secrets
 config.yml

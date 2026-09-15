@@ -67,7 +67,13 @@ def upload_import_file(
 ):
     """Загрузить и импортировать Excel-файл."""
     org, _period = ensure_org_by_id(db, user.organization_id)
-    
+
+    if block != "Реестры оценок" and block not in ALLOWED_BLOCKS:
+        raise HTTPException(status_code=400, detail="Неизвестный блок импорта")
+    safe_name = Path(file.filename or "").name
+    if not safe_name or Path(safe_name).suffix.lower() not in {".xlsx", ".xlsb"}:
+        raise HTTPException(status_code=400, detail="Разрешены только .xlsx и .xlsb")
+
     # Проверяем право доступа
     allowed_block = ALLOWED_BLOCKS.get(block)
     if allowed_block and user.role != allowed_block["role"] and user.role != UserRole.admin and user.role != UserRole.cok_okit:
@@ -83,19 +89,23 @@ def upload_import_file(
         if not found:
             raise HTTPException(status_code=400, detail=f"Недопустимый слот: {slot}")
     
-    # Сохраняем файл
+    # Validate before invoking a parser; never retain an untrusted upload.
     upload_path = _upload_dir(block, slot)
     upload_path.mkdir(parents=True, exist_ok=True)
-    
-    # Уникальное имя файла
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_name = file.filename.replace("/", "_").replace("\\", "_")
-    dest_path = upload_path / f"{timestamp}_{safe_name}"
-    
-    content = file.file.read()
-    dest_path.write_bytes(content)
-    
-    # Импортируем
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    total = 0
+    with tempfile.NamedTemporaryFile(dir=upload_path, suffix=Path(safe_name).suffix, delete=False) as tmp:
+        dest_path = Path(tmp.name)
+        while chunk := file.file.read(1024 * 1024):
+            total += len(chunk)
+            if total > max_bytes:
+                dest_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="Файл превышает допустимый размер")
+            tmp.write(chunk)
+    if dest_path.read_bytes()[:4] != b"PK\x03\x04":
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Некорректная сигнатура Excel")
+
     try:
         if block == "Реестры оценок" and slot:
             # Определяем year/half из slot
@@ -144,10 +154,13 @@ def upload_import_file(
             },
         }
     except HTTPException:
-        raise
-    except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Ошибка импорта: {exc}")
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Файл не удалось проверить или импортировать") from None
+    finally:
+        dest_path.unlink(missing_ok=True)
 
 
 @router.get("/import-log")
