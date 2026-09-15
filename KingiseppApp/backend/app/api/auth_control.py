@@ -42,6 +42,11 @@ class PasswordSetupIn(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class ControlLoginIn(BaseModel):
+    tab_no: str = Field(min_length=1, max_length=64)
+    password: str | None = Field(default=None, max_length=72)
+
+
 # Роли, доступные в каскаде
 CONTROL_ROLES = [
     ("Линейный ИТР", "master"),
@@ -169,14 +174,13 @@ def list_users(territory: str, role: str, db: Session = Depends(get_db)):
 @limiter.limit("5/minute")
 def control_login(
     request: Request,
-    tab_no: str,
-    password: str | None = None,
+    payload: ControlLoginIn,
     db: Session = Depends(get_db),
 ):
     """Вход по tab_no. Если пароль не установлен — переход к setup."""
     user = (
         db.query(User)
-        .filter(User.tab_no == tab_no.strip(), User.status == UserStatus.active)
+        .filter(User.tab_no == payload.tab_no.strip(), User.status == UserStatus.active)
         .first()
     )
     
@@ -200,7 +204,7 @@ def control_login(
         }
     
     # Если пароль есть, но не передан — тоже запрос setup
-    if not password:
+    if not payload.password:
         return {
             "requires_password_setup": True,
             "user": {
@@ -213,7 +217,7 @@ def control_login(
         }
     
     # Обычная проверка пароля
-    if not verify_password(password, user.password_hash):
+    if not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Неверный пароль")
     
     if user.must_change_password:

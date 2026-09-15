@@ -27,6 +27,15 @@ def test_setup_password_cannot_be_used_without_identity_proof(client, seed):
     assert response.status_code == 403
 
 
+def test_control_login_accepts_json_contract(client, seed):
+    response = client.post(
+        "/api/auth/control/login",
+        json={"tab_no": seed["master"].tab_no, "password": "Password123"},
+    )
+    assert response.status_code == 200
+    assert response.json()["access_token"]
+
+
 def test_setup_code_is_single_use_and_revokes_old_token(client, seed):
     target = seed["master"]
     old_headers = _auth(target)
