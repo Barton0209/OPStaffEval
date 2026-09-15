@@ -28,12 +28,31 @@ def test_setup_password_cannot_be_used_without_identity_proof(client, seed):
 
 
 def test_control_login_accepts_json_contract(client, seed):
+    db = object_session(seed["master"])
+    territory = Territory(organization_id=seed["org"].id, code="login", name="Участок А")
+    db.add(territory)
+    db.flush()
+    db.add(UserTerritoryMapping(
+        user_id=seed["master"].id, territory_id=territory.id, territory_name=territory.name,
+    ))
+    db.commit()
+    listed = client.get(
+        "/api/auth/control/users",
+        params={"territory": territory.name, "role": "Линейный ИТР"},
+    )
+    assert listed.status_code == 200
+    public_user = listed.json()[0]
+    assert set(public_user) == {"fio", "selection_token"}
     response = client.post(
         "/api/auth/control/login",
-        json={"tab_no": seed["master"].tab_no, "password": "Password123"},
+        json={"selection_token": public_user["selection_token"], "password": "Password123"},
     )
     assert response.status_code == 200
     assert response.json()["access_token"]
+    tampered = public_user["selection_token"][:-1] + ("A" if public_user["selection_token"][-1] != "A" else "B")
+    assert client.post("/api/auth/control/login", json={
+        "selection_token": tampered, "password": "Password123",
+    }).status_code == 401
 
 
 def test_setup_code_is_single_use_and_revokes_old_token(client, seed):

@@ -26,6 +26,8 @@ from app.rate_limit import limiter
 from app.schemas import TokenOut
 from app.security import (
     create_access_token,
+    create_login_selection,
+    decode_login_selection,
     decode_token,
     hash_password,
     hash_password_setup_code,
@@ -43,7 +45,7 @@ class PasswordSetupIn(BaseModel):
 
 
 class ControlLoginIn(BaseModel):
-    tab_no: str = Field(min_length=1, max_length=64)
+    selection_token: str = Field(min_length=20, max_length=2048)
     password: str | None = Field(default=None, max_length=72)
 
 
@@ -128,8 +130,8 @@ def list_roles(territory: str | None = None, db: Session = Depends(get_db)):
             if result:
                 return result
     
-    # Fallback: полный список
-    return [{"code": code, "name": name} for name, code in CONTROL_ROLES]
+    # Не раскрываем структуру ролей при отсутствии импортированных связей.
+    return []
 
 
 # ==================== Пользователи ====================
@@ -148,20 +150,25 @@ def list_users(territory: str, role: str, db: Session = Depends(get_db)):
     
     users = (
         db.query(User)
+        .join(UserTerritoryMapping, UserTerritoryMapping.user_id == User.id)
         .filter(
             User.organization_id == org.id,
             User.role == system_role,
             User.status == UserStatus.active,
+            UserTerritoryMapping.territory_name == territory,
         )
+        .distinct()
         .order_by(User.fio)
         .all()
     )
     
     return [
         {
-            "id": u.id,
-            "tab_no": u.tab_no,
             "fio": u.fio,
+            "selection_token": create_login_selection({
+                "uid": u.id, "org": u.organization_id,
+                "territory": territory, "role": system_role,
+            }),
         }
         for u in users
     ]
@@ -176,15 +183,23 @@ def control_login(
     payload: ControlLoginIn,
     db: Session = Depends(get_db),
 ):
-    """Вход по tab_no. Если пароль не установлен — переход к setup."""
-    user = (
-        db.query(User)
-        .filter(User.tab_no == payload.tab_no.strip(), User.status == UserStatus.active)
-        .first()
-    )
+    """Вход по непрозрачному токену, сформированному сервером для каскада."""
+    selection = decode_login_selection(payload.selection_token)
+    if not selection:
+        raise HTTPException(status_code=401, detail="Неверные данные для входа")
+    user = db.get(User, selection.get("uid"))
     
-    if not user:
-        raise HTTPException(status_code=401, detail="Пользователь не найден")
+    mapping_exists = db.query(UserTerritoryMapping.id).filter(
+        UserTerritoryMapping.user_id == user.id if user else False,
+        UserTerritoryMapping.territory_name == selection.get("territory"),
+    ).first()
+    if (
+        not user or user.status != UserStatus.active
+        or user.organization_id != selection.get("org")
+        or user.role.value != selection.get("role")
+        or not mapping_exists
+    ):
+        raise HTTPException(status_code=401, detail="Неверные данные для входа")
     
     # Проверяем, установлен ли пароль
     has_password = bool(user.password_hash and user.password_hash != "")
