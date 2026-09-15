@@ -18,7 +18,6 @@ from app.models import User, UserRole, UserStatus
 from app.rate_limit import limiter
 from app.scheduler import start_scheduler, stop_scheduler
 from app.security import (
-    generate_temporary_password,
     hash_password,
     renew_access_token_if_needed,
 )
@@ -40,41 +39,42 @@ def _ensure_bootstrap_admin() -> None:
         if not admin:
             if not settings.admin_initial_password:
                 logger.error("ADMIN-OP не создан: задайте ADMIN_INITIAL_PASSWORD и перезапустите приложение.")
-                db.rollback()
-                return
-            db.add(
-                User(
-                    organization_id=org.id,
-                    tab_no="ADMIN-OP",
-                    fio="Администрация ОП",
-                    role=UserRole.admin_op,
-                    status=UserStatus.active,
-                    password_hash=hash_password(settings.admin_initial_password),
-                    must_change_password=True,
+            else:
+                db.add(
+                    User(
+                        organization_id=org.id,
+                        tab_no="ADMIN-OP",
+                        fio="Администрация ОП",
+                        role=UserRole.admin_op,
+                        status=UserStatus.active,
+                        password_hash=hash_password(settings.admin_initial_password),
+                        must_change_password=True,
+                    )
                 )
-            )
-            logger.warning("Создана учётная запись ADMIN-OP из ADMIN_INITIAL_PASSWORD; значение не журналируется.")
-            logger.warning("Обязательно смените пароль при первом входе.")
+                logger.warning("Создана учётная запись ADMIN-OP из ADMIN_INITIAL_PASSWORD; значение не журналируется.")
+                logger.warning("Обязательно смените пароль при первом входе.")
         chief = (
             db.query(User)
             .filter(User.organization_id == org.id, User.tab_no == "CHIEF-OP")
             .first()
         )
         if not chief:
-            temp_pwd = generate_temporary_password()
-            db.add(
-                User(
-                    organization_id=org.id,
-                    tab_no="CHIEF-OP",
-                    fio="Начальник участка (пилот)",
-                    role=UserRole.site_chief,
-                    status=UserStatus.active,
-                    password_hash=hash_password(temp_pwd),
-                    must_change_password=True,
+            if not settings.chief_initial_password:
+                logger.error("CHIEF-OP не создан: задайте CHIEF_INITIAL_PASSWORD и перезапустите приложение.")
+            else:
+                db.add(
+                    User(
+                        organization_id=org.id,
+                        tab_no="CHIEF-OP",
+                        fio="Начальник участка (пилот)",
+                        role=UserRole.site_chief,
+                        status=UserStatus.active,
+                        password_hash=hash_password(settings.chief_initial_password),
+                        must_change_password=True,
+                    )
                 )
-            )
-            logger.warning("Создана учётная запись CHIEF-OP. Пароль выдан отдельно.")
-            logger.warning("Обязательно смените пароль при первом входе.")
+                logger.warning("Создана учётная запись CHIEF-OP из CHIEF_INITIAL_PASSWORD; значение не журналируется.")
+                logger.warning("Обязательно смените пароль при первом входе.")
         db.commit()
     finally:
         db.close()

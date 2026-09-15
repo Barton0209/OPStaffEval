@@ -151,11 +151,12 @@ export async function apiHealth(): Promise<{ status: string; app: string; org: s
 }
 
 /** Скачивание файла с авторизацией (Excel/PDF выгрузки). */
-export async function apiDownload(path: string, filename: string) {
+export async function apiDownload(path: string, filename: string, init: RequestInit = {}) {
     const token = getToken();
-    const headers = new Headers();
+    const headers = new Headers(init.headers || {});
+    if (init.body) headers.set("Content-Type", "application/json");
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    const res = await fetch(apiUrl(path), { headers });
+    const res = await fetch(apiUrl(path), { ...init, headers });
     if (!res.ok) {
         let detail = res.statusText;
         try {
@@ -175,4 +176,15 @@ export async function apiDownload(path: string, filename: string) {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+}
+
+/** Сохранённый пользователь сессии (для восстановления UI при requirePasswordChange). */
+export function getStoredUser(): SessionUser | null {
+    const raw = storage?.getItem(USER_KEY);
+    if (!raw) return null;
+    try {
+        return JSON.parse(raw) as SessionUser;
+    } catch {
+        return null;
+    }
 }

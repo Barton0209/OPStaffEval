@@ -148,6 +148,12 @@ def ensure_org_by_id(db: Session, org_id: int) -> tuple[Organization, Evaluation
     return _ensure_period_for_org(db, org)
 
 
+def _default_period_code(today: date) -> tuple[str, str]:
+    """Код и название периода по умолчанию: текущее полугодие (2026-H1 / 2026-H2)."""
+    half = "H1" if today.month <= 6 else "H2"
+    return f"{today.year}-{half}", f"Полугодие {today.year}-{half}"
+
+
 def _ensure_period_for_org(db: Session, org: Organization) -> EvaluationPeriod:
     period = (
         db.query(EvaluationPeriod)
@@ -156,26 +162,11 @@ def _ensure_period_for_org(db: Session, org: Organization) -> EvaluationPeriod:
         .first()
     )
     if not period:
+        code, title = _default_period_code(date.today())
         period = EvaluationPeriod(
             organization_id=org.id,
-            code="2026-H2",
-            title="Полугодие 2026-H2",
-            is_open=True,
-        )
-        db.add(period)
-        db.flush()
-    return org, period
-    period = (
-        db.query(EvaluationPeriod)
-        .filter(EvaluationPeriod.organization_id == org.id, EvaluationPeriod.is_open.is_(True))
-        .order_by(EvaluationPeriod.id.desc())
-        .first()
-    )
-    if not period:
-        period = EvaluationPeriod(
-            organization_id=org.id,
-            code="2026-H2",
-            title="Полугодие 2026-H2",
+            code=code,
+            title=title,
             is_open=True,
         )
         db.add(period)
@@ -952,6 +943,13 @@ def import_base_v2(db: Session, path: Path, org: Organization, actor_id: int | N
     added = updated = archived = skipped = 0
     errors: list[str] = []
     today = date.today()
+    # Открытые периоды организации: уволенные снимаются с оценивания только в них.
+    open_period_ids = [
+        p.id
+        for p in db.query(EvaluationPeriod)
+        .filter(EvaluationPeriod.organization_id == org.id, EvaluationPeriod.is_open.is_(True))
+        .all()
+    ]
     
     for i, row in enumerate(ws.iter_rows(values_only=True), 1):
         if i == 1:
@@ -986,25 +984,44 @@ def import_base_v2(db: Session, path: Path, org: Organization, actor_id: int | N
                 .first()
             )
             if existing:
-                from app.models import FiredEmployee
-                fe = FiredEmployee(
-                    original_employee_id=existing.id,
-                    organization_id=org.id,
-                    tab_no=existing.tab_no,
-                    fio=existing.fio,
-                    territory=existing.territory,
-                    department_1c=existing.department_1c,
-                    position_1c=existing.position_1c,
-                    category=existing.category,
-                    citizenship=existing.citizenship,
-                    hire_date=existing.hire_date,
-                    fire_date=fire_date,
-                    state=existing.state,
-                    hourly_rate=existing.hourly_rate,
-                    fired_by_user_id=actor_id,
+                # Идемпотентный архив: upsert по (организация, табельный) —
+                # повторный импорт обновляет запись, а не создаёт дубль.
+                fe = (
+                    db.query(FiredEmployee)
+                    .filter(
+                        FiredEmployee.organization_id == org.id,
+                        FiredEmployee.tab_no == existing.tab_no,
+                    )
+                    .first()
                 )
-                db.add(fe)
+                archive_fields = {
+                    "original_employee_id": existing.id,
+                    "fio": existing.fio,
+                    "territory": existing.territory,
+                    "department_1c": existing.department_1c,
+                    "position_1c": existing.position_1c,
+                    "category": existing.category,
+                    "citizenship": existing.citizenship,
+                    "hire_date": existing.hire_date,
+                    "fire_date": fire_date,
+                    "state": existing.state,
+                    "hourly_rate": existing.hourly_rate,
+                    "fired_by_user_id": actor_id,
+                }
+                if fe:
+                    for k, v in archive_fields.items():
+                        setattr(fe, k, v)
+                else:
+                    db.add(FiredEmployee(organization_id=org.id, tab_no=existing.tab_no, **archive_fields))
                 existing.state = "Уволен"
+                # Уволенный не участвует в оценивании: снимаем evaluate
+                # с назначений открытых периодов (сами назначения и оценки сохраняются).
+                if open_period_ids:
+                    db.query(Assignment).filter(
+                        Assignment.employee_id == existing.id,
+                        Assignment.period_id.in_(open_period_ids),
+                        Assignment.evaluate.is_(True),
+                    ).update({Assignment.evaluate: False}, synchronize_session=False)
                 archived += 1
             continue
         
@@ -1396,7 +1413,7 @@ def import_registry_scores(db: Session, path: Path, org: Organization,
     c_final = get_col("ИТОГОВАЯ ОЦЕНКА")
     
     for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
-        if not row or not row[c_tab] if c_tab else False:
+        if not row or (c_tab is not None and not row[c_tab]):
             continue
         
         tab_no = _norm_col(row, c_tab) if c_tab is not None else ""

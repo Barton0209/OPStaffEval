@@ -30,7 +30,7 @@ async function apiPost(url: string, body: Record<string, unknown>): Promise<any>
 
 interface Territory { code: string; name: string; }
 interface RoleItem { code: string; name: string; }
-interface CtrlUser { id: number; tab_no: string; fio: string; has_password: boolean; }
+interface CtrlUser { id: number; tab_no: string; fio: string; }
 
 interface LoginResponse {
   requires_password_setup: boolean;

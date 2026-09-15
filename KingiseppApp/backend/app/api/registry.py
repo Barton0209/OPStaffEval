@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from openpyxl import Workbook
 from sqlalchemy.orm import Session, joinedload
+from starlette.background import BackgroundTask
 
 from app.config import get_settings
 from app.db import get_db
@@ -105,6 +106,11 @@ def _temp_path(prefix: str, suffix: str) -> Path:
     fd, name = tempfile.mkstemp(prefix=prefix, suffix=suffix)
     os.close(fd)
     return Path(name)
+
+
+def _temp_file_response(path: Path, **kwargs) -> FileResponse:
+    """FileResponse с гарантированным удалением временного файла после отправки."""
+    return FileResponse(path, background=BackgroundTask(os.unlink, path), **kwargs)
 
 
 def _pdf_escape(text: str | None) -> str:
@@ -430,7 +436,7 @@ def export_registry_xlsx(
         payload={"rows": len(rows)},
     )
     db.commit()
-    return FileResponse(
+    return _temp_file_response(
         tmp,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename=f"reestr_ocenok_{period.code}.xlsx",
@@ -599,7 +605,7 @@ def export_questionnaires_pdf(
         payload={"questionnaires": len(rows)},
     )
     db.commit()
-    return FileResponse(tmp, media_type="application/pdf", filename=f"ankety_{period.code}.pdf")
+    return _temp_file_response(tmp, media_type="application/pdf", filename=f"ankety_{period.code}.pdf")
 
 
 @router.get("/questionnaire/{assignment_id}/pdf")
@@ -749,7 +755,7 @@ def questionnaire_pdf(
     )
     db.commit()
     safe_tab = "".join(ch for ch in str(emp.tab_no) if ch.isalnum() or ch in "_-") or "anketa"
-    return FileResponse(tmp, media_type="application/pdf", filename=f"anketa_{safe_tab}.pdf")
+    return _temp_file_response(tmp, media_type="application/pdf", filename=f"anketa_{safe_tab}.pdf")
 
 
 def _assert_kvyr_site_access(db: Session, user: User, period_id: int, body: KvyrIn) -> None:

@@ -162,7 +162,6 @@ def list_users(territory: str, role: str, db: Session = Depends(get_db)):
             "id": u.id,
             "tab_no": u.tab_no,
             "fio": u.fio,
-            "has_password": bool(u.password_hash and u.password_hash != ""),
         }
         for u in users
     ]

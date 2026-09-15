@@ -5,7 +5,7 @@ import zipfile
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 from sqlalchemy.orm import Session, joinedload
@@ -104,15 +104,16 @@ def export_all_employees(
             emp.rate_last_raised.isoformat() if emp.rate_last_raised else "",
         ])
 
-    fd, path = tempfile.mkstemp(suffix=".xlsx", prefix="employees_all_")
-    import os
-    os.close(fd)
-    wb.save(path)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
 
-    return FileResponse(
-        path,
-        filename=f"Все_сотрудники_{date.today()}.xlsx",
+    return StreamingResponse(
+        buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename=employees_all_{date.today()}.xlsx"
+        },
     )
 
 
@@ -318,6 +319,3 @@ def export_pdf_batch(
     )
 
 
-# ==================== Импорт необходимых модулей ====================
-import tempfile
-import os

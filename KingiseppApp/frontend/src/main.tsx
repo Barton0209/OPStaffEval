@@ -8,6 +8,7 @@ import {
   apiMe,
   clearSession,
   getApiBase,
+  getStoredUser,
   getToken,
   setApiBase,
   setRequirePasswordChangeHandler,
@@ -86,13 +87,11 @@ function App() {
       } catch (e) {
         const err = e as { requirePasswordChange?: boolean };
         if (err?.requirePasswordChange) {
-          const raw = localStorage.getItem("kingisepp_user");
-          if (raw) {
-            try {
-              setUser(JSON.parse(raw));
-              setShowChangePwd(true);
-              return;
-            } catch { /* ignore */ }
+          const cached = getStoredUser();
+          if (cached) {
+            setUser(cached);
+            setShowChangePwd(true);
+            return;
           }
         }
         clearSession();

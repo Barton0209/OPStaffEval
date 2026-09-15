@@ -1,11 +1,12 @@
 """API для управления импортами, журналами и архивом уволенных."""
 
+import io
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -309,14 +310,15 @@ def export_fired_employees(
             fe.fired_at.strftime("%d.%m.%Y %H:%M") if fe.fired_at else "",
         ])
     
-    # Сохраняем во временный файл
-    fd, path = tempfile.mkstemp(suffix=".xlsx", prefix="fired_")
-    import os
-    os.close(fd)
-    wb.save(path)
-    
-    return FileResponse(
-        path,
-        filename=f"Уволенные_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+    # Отдаём из памяти — без временных файлов на диске
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename=fired_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        },
     )

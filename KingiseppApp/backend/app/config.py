@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # Comma-separated IPs/CIDRs. Forwarded headers are ignored for every other peer.
     trusted_proxies: str = ""
     admin_initial_password: str = ""
+    chief_initial_password: str = ""
 
     def model_post_init(self, __context) -> None:  # noqa: ANN001
         if not self.database_url.strip():

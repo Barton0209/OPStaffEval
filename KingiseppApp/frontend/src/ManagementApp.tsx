@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { SessionUser } from "./api";
+import { apiDownload, request, type SessionUser } from "./api";
 
 interface DepartmentInfo {
   department: string;
@@ -26,31 +26,11 @@ interface RangeInfo {
 }
 
 async function apiGet(url: string): Promise<any> {
-  const token = localStorage.getItem("kingisepp_token");
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token || ""}` },
-  });
-  if (!res.ok) throw new Error(res.statusText);
-  return res.json();
+  return request(url);
 }
 
 async function apiPost(url: string, body: any): Promise<any> {
-  const token = localStorage.getItem("kingisepp_token");
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token || ""}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    let detail = res.statusText;
-    try { detail = JSON.parse(text).detail ?? text; } catch {}
-    throw new Error(detail || res.statusText);
-  }
-  return res.json();
+  return request(url, { method: "POST", body: JSON.stringify(body) });
 }
 
 export function ManagementApp({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
@@ -104,29 +84,39 @@ export function ManagementApp({ user, onLogout }: { user: SessionUser; onLogout:
 
   // Выгрузка Excel диапазона
   async function exportRangeExcel(dept: string, range: string) {
-    const token = localStorage.getItem("kingisepp_token");
-    window.open(
-      `/api/summary/departments/${encodeURIComponent(dept)}/range/${encodeURIComponent(range)}/export.xlsx?_token=${token}`,
-      "_blank"
-    );
+    try {
+      await apiDownload(
+        `/api/summary/departments/${encodeURIComponent(dept)}/range/${encodeURIComponent(range)}/export.xlsx`,
+        `svod_${dept}_${range}.xlsx`,
+      );
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Ошибка выгрузки");
+    }
   }
 
   // Выгрузка полного Excel
   async function exportAllEmployees() {
-    const token = localStorage.getItem("kingisepp_token");
-    window.open(`/api/employees/export.xlsx?_token=${token}`, "_blank");
+    try {
+      await apiDownload("/api/employees/export.xlsx", "vse_sotrudniki.xlsx");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Ошибка выгрузки");
+    }
   }
 
   // Выгрузка PDF
   async function exportPdf() {
     if (!rangeEmployees) return;
     try {
-      await apiPost("/api/employees/export-pdf", {
-        employee_ids: rangeEmployees.employees.map((e) => e.employee_id),
-      });
-      // Перенаправление на скачивание
-      const token = localStorage.getItem("kingisepp_token");
-      window.open(`/api/employees/export-pdf?_token=${token}`, "_blank");
+      await apiDownload(
+        "/api/employees/export-pdf",
+        "ankety.zip",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            employee_ids: rangeEmployees.employees.map((e) => e.employee_id),
+          }),
+        },
+      );
     } catch (e) {
       alert(e instanceof Error ? e.message : "Ошибка PDF");
     }
