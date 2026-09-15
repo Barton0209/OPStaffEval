@@ -1,7 +1,12 @@
 import secrets
+import hashlib
+import hmac
+import base64
+import json
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
+from cryptography.fernet import Fernet, InvalidToken
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
@@ -11,6 +16,28 @@ from app.models import User, UserStatus
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
 settings = get_settings()
+
+
+def hash_password_setup_code(user_id: int, code: str) -> str:
+    """Keyed hash prevents recovery of short numeric codes from a database leak."""
+    message = f"{user_id}:{code}".encode()
+    return hmac.new(settings.secret_key.encode(), message, hashlib.sha256).hexdigest()
+
+
+def create_login_selection(payload: dict) -> str:
+    """Encrypt a short-lived cascade-login selection without exposing database IDs."""
+    key = base64.urlsafe_b64encode(hashlib.sha256(settings.secret_key.encode()).digest())
+    return Fernet(key).encrypt(json.dumps(payload, separators=(",", ":")).encode()).decode()
+
+
+def decode_login_selection(token: str, ttl_seconds: int = 300) -> dict | None:
+    key = base64.urlsafe_b64encode(hashlib.sha256(settings.secret_key.encode()).digest())
+    try:
+        raw = Fernet(key).decrypt(token.encode(), ttl=ttl_seconds)
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else None
+    except (InvalidToken, ValueError, TypeError, json.JSONDecodeError):
+        return None
 
 
 def generate_temporary_password() -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+import secrets
 from pathlib import Path
 import shutil
 
@@ -19,6 +20,7 @@ from app.models import (
     Evaluation,
     EvaluationStatus,
     ListTicket,
+    PasswordSetupCode,
     TariffGrid,
     TicketStatus,
     UrgentEvaluator,
@@ -41,7 +43,7 @@ from app.schemas import (
     UserCreateIn,
     UserPatchIn,
 )
-from app.security import hash_password
+from app.security import hash_password, hash_password_setup_code
 from app.services.evaluations import (
     count_closed_assignments,
     covering_evaluator_ids,
@@ -190,62 +192,6 @@ def import_all_excel(
         import_users(db, users, org, user.id),
         import_carnet(db, registry, org, period, user.id),
     ]
-
-
-@router.post("/import/upload", response_model=list[ImportResult])
-async def import_upload(
-    base_file: UploadFile | None = File(None, description="01_База_1С.xlsx"),
-    users_file: UploadFile | None = File(None, description="02_Пользователи.xlsx"),
-    carnet_file: UploadFile | None = File(None, description="03_Реестр_закрепления.xlsx"),
-    ud_file: UploadFile | None = File(None, description="УД_Список сотрудников (.xlsb)"),
-    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op)),
-    db: Session = Depends(get_db),
-) -> list[ImportResult]:
-    """Загрузка Excel прямо из браузера."""
-    if not base_file and not users_file and not carnet_file and not ud_file:
-        raise HTTPException(status_code=400, detail="Выберите хотя бы один Excel-файл")
-    org, period = ensure_org_by_id(db, user.organization_id)
-    files_dir = settings.files_path
-    files_dir.mkdir(parents=True, exist_ok=True)
-    results: list[ImportResult] = []
-
-    max_bytes = settings.max_upload_mb * 1024 * 1024
-    XLSX_MAGIC = b"PK\x03\x04"
-
-    async def _save(upload: UploadFile, target_name: str) -> Path:
-        # Валидация: сигнатура xlsx/xlsb (zip-контейнер) и лимит размера.
-        head = await upload.read(4)
-        await upload.seek(0)
-        if head != XLSX_MAGIC:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{target_name}: файл не является Excel (.xlsx/.xlsb)",
-            )
-        content = await upload.read(max_bytes + 1)
-        await upload.seek(0)
-        if len(content) > max_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"{target_name}: размер превышает {settings.max_upload_mb} МБ",
-            )
-        dest = files_dir / target_name
-        with dest.open("wb") as out:
-            shutil.copyfileobj(upload.file, out)
-        return dest
-
-    if base_file and base_file.filename:
-        path = await _save(base_file, "01_База_1С.xlsx")
-        results.append(import_base(db, path, org, user.id))
-    if users_file and users_file.filename:
-        path = await _save(users_file, "02_Пользователи.xlsx")
-        results.append(import_users(db, path, org, user.id))
-    if carnet_file and carnet_file.filename:
-        path = await _save(carnet_file, "03_Реестр_закрепления.xlsx")
-        results.append(import_carnet(db, path, org, period, user.id))
-    if ud_file and ud_file.filename:
-        path = await _save(ud_file, "УД_Список_сотрудников.xlsb")
-        results.append(import_ud_rates(db, path, org, user.id))
-    return results
 
 
 @router.post("/import/daily-assignees", response_model=ImportResult)
@@ -915,10 +861,11 @@ def patch_user(
         )
 
     if "role" in data and data["role"] is not None:
-        if user.role == UserRole.admin_op and data["role"] == UserRole.admin:
+        admin_op_assignable = {UserRole.master, UserRole.foreman, UserRole.site_chief}
+        if user.role == UserRole.admin_op and data["role"] not in admin_op_assignable:
             raise HTTPException(
                 status_code=403,
-                detail="Администрация ОП не может назначать роль системного админа",
+                detail="Администрация ОП не может назначить эту роль",
             )
         target.role = data["role"]
     if "site_code" in data:
@@ -926,7 +873,7 @@ def patch_user(
     if "site_name" in data:
         target.site_name = (data["site_name"] or "").strip() or None
     if "status" in data and data["status"]:
-        target.status = data["status"].strip()
+        target.status = data["status"]
     if "password" in data and data["password"]:
         target.password_hash = hash_password(data["password"].strip())
         # F03 FIX: увеличиваем token_version — старые токены отзываются
@@ -955,6 +902,44 @@ def patch_user(
             "status": target.status,
         },
     }
+
+
+@router.post("/users/{user_id}/setup-code")
+def issue_password_setup_code(
+    user_id: int,
+    user: User = Depends(require_roles(UserRole.admin, UserRole.admin_op, UserRole.cok_okit)),
+    db: Session = Depends(get_db),
+):
+    """Issue a short-lived code for delivery to the user through an offline channel."""
+    target = db.get(User, user_id)
+    if not target or target.organization_id != user.organization_id:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    protected = {UserRole.admin, UserRole.admin_op, UserRole.management_op, UserRole.cok_okit,
+                 UserRole.cok_adapt, UserRole.cok_otiz, UserRole.economist}
+    if user.role == UserRole.admin_op and target.role in protected:
+        raise HTTPException(status_code=403, detail="Нельзя сбросить пароль этой роли")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.query(PasswordSetupCode).filter(
+        PasswordSetupCode.user_id == target.id,
+        PasswordSetupCode.consumed_at.is_(None),
+    ).update({PasswordSetupCode.consumed_at: now}, synchronize_session=False)
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    db.add(PasswordSetupCode(
+        user_id=target.id,
+        code_hash=hash_password_setup_code(target.id, code),
+        expires_at=now + timedelta(minutes=15),
+        created_by_user_id=user.id,
+    ))
+    target.must_change_password = True
+    target.token_version = (target.token_version or 0) + 1
+    emit_event(
+        db, organization_id=user.organization_id, actor_user_id=user.id,
+        entity_type="user", entity_id=target.id, action="password_setup_code_issued",
+        payload={"expires_in_minutes": 15},
+    )
+    db.commit()
+    return {"setup_code": code, "expires_in_minutes": 15}
 
 
 @router.post("/users")
@@ -997,7 +982,7 @@ def create_user(
         role=body.role,
         site_code=(body.site_code or "").strip() or None,
         site_name=(body.site_name or "").strip() or None,
-        status=body.status.strip() or UserStatus.active.value,
+        status=body.status,
         password_hash=hash_password(body.password.strip()),
     )
     db.add(target)

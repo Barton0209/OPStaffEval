@@ -30,7 +30,7 @@ async function apiPost(url: string, body: Record<string, unknown>): Promise<any>
 
 interface Territory { code: string; name: string; }
 interface RoleItem { code: string; name: string; }
-interface CtrlUser { id: number; tab_no: string; fio: string; has_password: boolean; }
+interface CtrlUser { fio: string; selection_token: string; }
 
 interface LoginResponse {
   requires_password_setup: boolean;
@@ -89,6 +89,7 @@ export function LoginScreen({ onLogin }: { onLogin: (token: string, user: any) =
   const [selTerritory, setSelTerritory] = useState("");
   const [selRole, setSelRole] = useState("");
   const [selUser, setSelUser] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -123,12 +124,7 @@ export function LoginScreen({ onLogin }: { onLogin: (token: string, user: any) =
     setBusy(true);
     setError("");
     try {
-      const user = users.find((u) => u.id.toString() === selUser);
-      const body: Record<string, unknown> = { tab_no: user?.tab_no || selUser };
-      if (user && user.has_password) {
-        // Если у пользователя есть пароль — запросим setup (UI обработает)
-        body.password = "";
-      }
+      const body: Record<string, unknown> = { selection_token: selUser, password };
       const resp: LoginResponse = await apiPost("/api/auth/control/login", body);
       if (resp.requires_password_setup) {
         // Переход на страницу создания пароля
@@ -196,9 +192,21 @@ export function LoginScreen({ onLogin }: { onLogin: (token: string, user: any) =
               >
                 <option value="------">------</option>
                 {users.map((u) => (
-                  <option key={u.id} value={u.id.toString()}>{u.fio} ({u.tab_no})</option>
+                  <option key={u.selection_token} value={u.selection_token}>{u.fio}</option>
                 ))}
               </select>
+            </label>
+
+            <label className="login-field">
+              <span>Пароль</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setError(""); }}
+                disabled={!selUser}
+                placeholder="При первом входе оставьте пустым"
+              />
             </label>
 
             {error && <p className="login-error">{error}</p>}

@@ -1,11 +1,13 @@
 """API для каскадного входа «Контроль»: Territory → Role → Users → Login → Setup Password."""
 
 from datetime import datetime, timezone
+import hmac
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.db import get_db
@@ -13,6 +15,7 @@ from app.models import (
     Department,
     GroupOfUsers,
     Organization,
+    PasswordSetupCode,
     Territory,
     User,
     UserRole,
@@ -23,13 +26,28 @@ from app.rate_limit import limiter
 from app.schemas import TokenOut
 from app.security import (
     create_access_token,
+    create_login_selection,
+    decode_login_selection,
     decode_token,
     hash_password,
+    hash_password_setup_code,
     verify_password,
 )
 
 router = APIRouter(prefix="/api/auth/control", tags=["auth_control"])
 settings = get_settings()
+
+
+class PasswordSetupIn(BaseModel):
+    user_id: int
+    code: str = Field(min_length=6, max_length=32)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class ControlLoginIn(BaseModel):
+    selection_token: str = Field(min_length=20, max_length=2048)
+    password: str | None = Field(default=None, max_length=72)
+
 
 # Роли, доступные в каскаде
 CONTROL_ROLES = [
@@ -112,8 +130,8 @@ def list_roles(territory: str | None = None, db: Session = Depends(get_db)):
             if result:
                 return result
     
-    # Fallback: полный список
-    return [{"code": code, "name": name} for name, code in CONTROL_ROLES]
+    # Не раскрываем структуру ролей при отсутствии импортированных связей.
+    return []
 
 
 # ==================== Пользователи ====================
@@ -132,21 +150,25 @@ def list_users(territory: str, role: str, db: Session = Depends(get_db)):
     
     users = (
         db.query(User)
+        .join(UserTerritoryMapping, UserTerritoryMapping.user_id == User.id)
         .filter(
             User.organization_id == org.id,
             User.role == system_role,
             User.status == UserStatus.active,
+            UserTerritoryMapping.territory_name == territory,
         )
+        .distinct()
         .order_by(User.fio)
         .all()
     )
     
     return [
         {
-            "id": u.id,
-            "tab_no": u.tab_no,
             "fio": u.fio,
-            "has_password": bool(u.password_hash and u.password_hash != ""),
+            "selection_token": create_login_selection({
+                "uid": u.id, "org": u.organization_id,
+                "territory": territory, "role": system_role,
+            }),
         }
         for u in users
     ]
@@ -158,19 +180,26 @@ def list_users(territory: str, role: str, db: Session = Depends(get_db)):
 @limiter.limit("5/minute")
 def control_login(
     request: Request,
-    tab_no: str,
-    password: str | None = None,
+    payload: ControlLoginIn,
     db: Session = Depends(get_db),
 ):
-    """Вход по tab_no. Если пароль не установлен — переход к setup."""
-    user = (
-        db.query(User)
-        .filter(User.tab_no == tab_no.strip(), User.status == UserStatus.active)
-        .first()
-    )
+    """Вход по непрозрачному токену, сформированному сервером для каскада."""
+    selection = decode_login_selection(payload.selection_token)
+    if not selection:
+        raise HTTPException(status_code=401, detail="Неверные данные для входа")
+    user = db.get(User, selection.get("uid"))
     
-    if not user:
-        raise HTTPException(status_code=401, detail="Пользователь не найден")
+    mapping_exists = db.query(UserTerritoryMapping.id).filter(
+        UserTerritoryMapping.user_id == user.id if user else False,
+        UserTerritoryMapping.territory_name == selection.get("territory"),
+    ).first()
+    if (
+        not user or user.status != UserStatus.active
+        or user.organization_id != selection.get("org")
+        or user.role.value != selection.get("role")
+        or not mapping_exists
+    ):
+        raise HTTPException(status_code=401, detail="Неверные данные для входа")
     
     # Проверяем, установлен ли пароль
     has_password = bool(user.password_hash and user.password_hash != "")
@@ -189,7 +218,7 @@ def control_login(
         }
     
     # Если пароль есть, но не передан — тоже запрос setup
-    if not password:
+    if not payload.password:
         return {
             "requires_password_setup": True,
             "user": {
@@ -202,7 +231,7 @@ def control_login(
         }
     
     # Обычная проверка пароля
-    if not verify_password(password, user.password_hash):
+    if not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Неверный пароль")
     
     if user.must_change_password:
@@ -242,19 +271,38 @@ def control_login(
 @limiter.limit("3/minute")
 def setup_password(
     request: Request,
-    user_id: int,
-    new_password: str,
+    payload: PasswordSetupIn,
     db: Session = Depends(get_db),
 ):
-    """Установка пароля для первого входа."""
-    if len(new_password) < 8:
-        raise HTTPException(status_code=400, detail="Пароль должен содержать минимум 8 символов")
-    
-    user = db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-    
-    user.password_hash = hash_password(new_password)
+    """Consume an administrator-issued one-time code and set a new password."""
+    user = db.get(User, payload.user_id)
+    if not user or user.status != UserStatus.active or not user.must_change_password:
+        raise HTTPException(status_code=403, detail="Установка пароля недоступна")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    setup_code = (
+        db.query(PasswordSetupCode)
+        .filter(
+            PasswordSetupCode.user_id == user.id,
+            PasswordSetupCode.consumed_at.is_(None),
+        )
+        .order_by(PasswordSetupCode.id.desc())
+        .first()
+    )
+    supplied_hash = hash_password_setup_code(user.id, payload.code.strip())
+    if (
+        not setup_code
+        or setup_code.expires_at <= now
+        or setup_code.attempts >= setup_code.max_attempts
+        or not hmac.compare_digest(setup_code.code_hash, supplied_hash)
+    ):
+        if setup_code and setup_code.expires_at > now and setup_code.attempts < setup_code.max_attempts:
+            setup_code.attempts += 1
+            db.commit()
+        raise HTTPException(status_code=403, detail="Код недействителен или истёк")
+
+    setup_code.consumed_at = now
+    user.password_hash = hash_password(payload.new_password)
     user.must_change_password = False
     # F03 FIX: увеличиваем token_version
     user.token_version = (user.token_version or 0) + 1

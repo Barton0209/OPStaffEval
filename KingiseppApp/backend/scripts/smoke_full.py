@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.request
 
@@ -28,11 +29,16 @@ def call(method: str, path: str, token: str | None = None, body: dict | None = N
 
 
 def main() -> int:
+    admin_password = os.environ.get("SMOKE_ADMIN_PASSWORD")
+    master_tab_no = os.environ.get("SMOKE_MASTER_TAB_NO")
+    master_password = os.environ.get("SMOKE_MASTER_PASSWORD")
+    if not admin_password:
+        raise RuntimeError("SMOKE_ADMIN_PASSWORD must be set")
     code, health = call("GET", "/api/health")
     assert code == 200, health
     print("health:", health)
 
-    code, admin = call("POST", "/api/field/auth/login", body={"tab_no": "ADMIN-OP", "password": "AdminOP2026"})
+    code, admin = call("POST", "/api/field/auth/login", body={"tab_no": "ADMIN-OP", "password": admin_password})
     assert code == 200, admin
     at = admin["access_token"]
     code, dash = call("GET", "/api/admin/dashboard", token=at)
@@ -43,7 +49,10 @@ def main() -> int:
     assert code == 200, rows
     print("registry rows:", len(rows))
 
-    code, master = call("POST", "/api/field/auth/login", body={"tab_no": "ВМ-0140784", "password": "K0140784"})
+    if not master_tab_no or not master_password:
+        print("master smoke skipped: set SMOKE_MASTER_TAB_NO and SMOKE_MASTER_PASSWORD")
+        return 0
+    code, master = call("POST", "/api/field/auth/login", body={"tab_no": master_tab_no, "password": master_password})
     if code != 200:
         print("master login failed:", code, master)
     else:

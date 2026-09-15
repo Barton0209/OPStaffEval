@@ -56,8 +56,10 @@ def client(db_engine):
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+    app.state.limiter.reset()
     # Без `with` — lifespan (миграции/планировщик) не запускается.
     yield TestClient(app)
+    app.state.limiter.reset()
     app.dependency_overrides.clear()
 
 
