@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
+from app.deps import get_current_user_allow_password_change
 from app.models import (
     Department,
     GroupOfUsers,
@@ -244,15 +245,26 @@ def setup_password(
     request: Request,
     user_id: int,
     new_password: str,
+    authenticated_user: User = Depends(get_current_user_allow_password_change),
     db: Session = Depends(get_db),
 ):
-    """Установка пароля для первого входа."""
+    """Replace an administrator-issued temporary password after proving possession.
+
+    Selecting a public user entry is never sufficient proof of identity. Accounts
+    without a credential require the separate administrator reset/activation flow.
+    """
     if len(new_password) < 8:
         raise HTTPException(status_code=400, detail="Пароль должен содержать минимум 8 символов")
     
     user = db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    if (
+        not user
+        or user.id != authenticated_user.id
+        or user.status != UserStatus.active
+        or not user.must_change_password
+        or not user.password_hash
+    ):
+        raise HTTPException(status_code=403, detail="Установка пароля недоступна")
     
     user.password_hash = hash_password(new_password)
     user.must_change_password = False

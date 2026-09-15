@@ -1,9 +1,6 @@
 import json
+import os
 import urllib.request
-
-from app.db import SessionLocal
-from app.models import User
-
 
 def post(url, data, token=None):
     req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), method="POST")
@@ -21,14 +18,14 @@ def get(url, token):
         return json.load(r)
 
 
-db = SessionLocal()
-u = db.query(User).filter(User.tab_no.like("%0140784")).first()
-tab = u.tab_no
-db.close()
+tab = os.environ.get("SMOKE_MASTER_TAB_NO")
+password = os.environ.get("SMOKE_MASTER_PASSWORD")
+if not tab or not password:
+    raise RuntimeError("SMOKE_MASTER_TAB_NO and SMOKE_MASTER_PASSWORD must be set")
 
 login = post(
     "http://127.0.0.1:8000/api/field/auth/login",
-    {"tab_no": tab, "password": "K0140784"},
+    {"tab_no": tab, "password": password},
 )
 token = login["access_token"]
 print("login", login["fio"], login["role"])
